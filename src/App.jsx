@@ -1,10 +1,18 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { getTossShareLink, saveBase64Data, setClipboardText, share } from '@apps-in-toss/web-framework'
+import { BottomCTA, BottomSheet, Button, IconButton, ListHeader, ListRow, SegmentedControl, Tab, TextField, Top, useWebToast } from '@toss/tds-mobile'
 
 const tabs = {
   home: 'home',
   history: 'history',
   settings: 'settings',
 }
+
+const tabItems = [
+  { id: tabs.home, icon: 'payments', label: '정산하기' },
+  { id: tabs.history, icon: 'history', label: '정산 내역' },
+  { id: tabs.settings, icon: 'settings', label: '설정' },
+]
 
 const steps = {
   start: 'start',
@@ -34,12 +42,180 @@ const settlementModes = [
   { id: 'ratio', icon: 'pie_chart', title: '차등 정산', description: '각자 다른 비율로 나눠 내요.' },
 ]
 
+const amountKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', 'backspace']
+
 function formatWon(value) {
   return `${Number(value || 0).toLocaleString('ko-KR')}원`
 }
 
+function base64Encode(text) {
+  return window.btoa(unescape(encodeURIComponent(text)))
+}
+
+function buildSharePayload({ amount, participants, splitAmount, winner }) {
+  const paidParticipants = participants.filter((participant) => participant !== winner)
+  const memberLines = participants.map((participant) => (
+    `${participant}: ${participant === winner ? '면제 (0원)' : formatWon(splitAmount)}`
+  ))
+
+  return {
+    amount,
+    fileName: 'nuganellae-settlement-result.png',
+    memberLines,
+    paidParticipants,
+    participants,
+    splitAmount,
+    title: '누가낼래 정산 결과',
+    winner,
+    message: [
+      '누가낼래 정산 결과',
+      `총 정산 금액: ${formatWon(amount)}`,
+      `면제자: ${winner}`,
+      `부담 인원: ${paidParticipants.length}명`,
+      `1인당 금액: ${formatWon(splitAmount)}`,
+      memberLines.join(' / '),
+    ].join('\n'),
+  }
+}
+
+function buildSettlementDeepLink(payload) {
+  const params = new URLSearchParams({
+    amount: String(payload.amount),
+    splitAmount: String(payload.splitAmount),
+    winner: payload.winner,
+    participants: payload.participants.join(','),
+  })
+
+  return `intoss://nuganellae/settlement-result?${params.toString()}`
+}
+
+function buildReceiptSvg(payload) {
+  const rows = payload.participants.map((participant, index) => {
+    const amountText = participant === payload.winner ? '면제' : formatWon(payload.splitAmount)
+    return `
+      <text x="48" y="${230 + index * 38}" fill="#4e5968" font-size="22" font-weight="700">${participant}</text>
+      <text x="452" y="${230 + index * 38}" fill="#191f28" font-size="22" font-weight="800" text-anchor="end">${amountText}</text>
+    `
+  }).join('')
+
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="500" height="560" viewBox="0 0 500 560">
+      <rect width="500" height="560" rx="36" fill="#f9fafb"/>
+      <rect x="28" y="28" width="444" height="504" rx="28" fill="#ffffff"/>
+      <circle cx="250" cy="96" r="34" fill="#e8f3ff"/>
+      <text x="250" y="105" fill="#3182f6" font-size="34" font-weight="900" text-anchor="middle">₩</text>
+      <text x="250" y="158" fill="#191f28" font-size="30" font-weight="900" text-anchor="middle">누가낼래 정산 결과</text>
+      <text x="250" y="190" fill="#6b7684" font-size="18" font-weight="600" text-anchor="middle">총 ${formatWon(payload.amount)} · ${payload.winner} 님 면제</text>
+      ${rows}
+      <rect x="48" y="430" width="404" height="70" rx="18" fill="#f2f4f6"/>
+      <text x="72" y="474" fill="#4e5968" font-size="20" font-weight="700">나머지 ${payload.paidParticipants.length}명이 각</text>
+      <text x="428" y="474" fill="#3182f6" font-size="24" font-weight="900" text-anchor="end">${formatWon(payload.splitAmount)}</text>
+    </svg>
+  `
+}
+
+async function createSettlementImageBase64(payload) {
+  const svg = buildReceiptSvg(payload)
+  const fallbackBase64 = base64Encode(svg)
+
+  if (typeof document === 'undefined' || navigator.userAgent.includes('jsdom')) {
+    return fallbackBase64
+  }
+
+  const canvas = document.createElement('canvas')
+  let context
+  try {
+    context = canvas.getContext?.('2d')
+  } catch {
+    context = null
+  }
+
+  if (context == null || typeof Image === 'undefined') {
+    return fallbackBase64
+  }
+
+  canvas.width = 500
+  canvas.height = 560
+
+  return new Promise((resolve) => {
+    const image = new Image()
+    image.onload = () => {
+      context.drawImage(image, 0, 0)
+      resolve(canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, ''))
+    }
+    image.onerror = () => resolve(fallbackBase64)
+    image.src = `data:image/svg+xml;base64,${fallbackBase64}`
+  })
+}
+
+async function getSettlementShareLink(payload) {
+  return getTossShareLink(buildSettlementDeepLink(payload))
+}
+
+async function copySettlementLink(payload) {
+  const tossLink = await getSettlementShareLink(payload)
+
+  try {
+    await setClipboardText(tossLink)
+  } catch {
+    await navigator.clipboard?.writeText(tossLink)
+  }
+
+  return tossLink
+}
+
+function downloadBase64Image({ data, fileName }) {
+  if (typeof document === 'undefined') {
+    return
+  }
+
+  const link = document.createElement('a')
+  link.href = `data:image/png;base64,${data}`
+  link.download = fileName
+  link.click()
+}
+
 function Icon({ children, className = '' }) {
   return <span aria-hidden="true" className={`material-symbols-outlined ${className}`}>{children}</span>
+}
+
+function TextStack({ title, description, meta }) {
+  return (
+    <span className="tds-text-stack">
+      {meta && <small>{meta}</small>}
+      <strong>{title}</strong>
+      {description && <small>{description}</small>}
+    </span>
+  )
+}
+
+function TdsTitle({ title, subtitle, id, centered = false }) {
+  return (
+    <Top
+      upperGap={0}
+      lowerGap={12}
+      title={<Top.TitleParagraph id={id} size={28}>{title}</Top.TitleParagraph>}
+      subtitleBottom={subtitle ? <Top.SubtitleParagraph size={15}>{subtitle}</Top.SubtitleParagraph> : undefined}
+      className={centered ? 'tds-top centered' : 'tds-top'}
+    />
+  )
+}
+
+function ScreenCTA({ children, onClick, disabled = false, color = 'primary', variant = 'fill', icon }) {
+  return (
+    <div className="screen-cta">
+      <BottomCTA.Single
+        background="none"
+        color={color}
+        disabled={disabled}
+        onClick={onClick}
+        variant={variant}
+      >
+        {icon && <Icon>{icon}</Icon>}
+        {children}
+      </BottomCTA.Single>
+    </div>
+  )
 }
 
 function App() {
@@ -52,6 +228,8 @@ function App() {
   const [winner, setWinner] = useState('영희')
   const [shareOpen, setShareOpen] = useState(false)
   const [filter, setFilter] = useState('전체')
+  const [stepHistory, setStepHistory] = useState([])
+  const [rouletteSpinning, setRouletteSpinning] = useState(false)
 
   const paidParticipants = useMemo(
     () => participants.filter((participant) => participant !== winner),
@@ -60,14 +238,70 @@ function App() {
   const effectiveAmount = amount || 84000
   const splitAmount = Math.ceil(effectiveAmount / Math.max(1, paidParticipants.length))
 
-  function goHome(nextStep = steps.start) {
+  useEffect(() => {
+    if (!rouletteSpinning) {
+      return undefined
+    }
+
+    const timerId = window.setTimeout(() => {
+      const nextWinner = participants.includes('영희') ? '영희' : participants[participants.length - 1]
+      setWinner(nextWinner)
+      setRouletteSpinning(false)
+      navigateHomeStep(steps.rouletteResult)
+    }, 2000)
+
+    return () => window.clearTimeout(timerId)
+  }, [participants, rouletteSpinning])
+
+  function navigateHomeStep(nextStep, { resetHistory = false, replace = false } = {}) {
     setActiveTab(tabs.home)
-    setStep(nextStep)
     setShareOpen(false)
+    if (nextStep !== steps.roulette) {
+      setRouletteSpinning(false)
+    }
+
+    setStepHistory((history) => {
+      if (resetHistory) {
+        return []
+      }
+
+      if (replace || nextStep === step) {
+        return history
+      }
+
+      return [...history, step]
+    })
+    setStep(nextStep)
+  }
+
+  function goHome(nextStep = steps.start) {
+    navigateHomeStep(nextStep, { resetHistory: true })
   }
 
   function addAmount(value) {
     setAmount((current) => current + value)
+  }
+
+  function inputAmountKey(key) {
+    if (key === 'backspace') {
+      setAmount((current) => {
+        const nextValue = String(current).slice(0, -1)
+        return Number(nextValue || 0)
+      })
+      return
+    }
+
+    setAmount((current) => Number(`${current === 0 ? '' : current}${key}`))
+  }
+
+  function goPreviousHomeStep() {
+    const previousStep = stepHistory[stepHistory.length - 1] || steps.start
+
+    setActiveTab(tabs.home)
+    setShareOpen(false)
+    setRouletteSpinning(false)
+    setStepHistory((history) => history.slice(0, -1))
+    setStep(previousStep)
   }
 
   function handleParticipantSubmit(event) {
@@ -98,17 +332,15 @@ function App() {
   function chooseMethod(mode) {
     setSettlementMode(mode)
     if (mode === 'exempt') {
-      setStep(steps.exempt)
+      navigateHomeStep(steps.exempt)
       return
     }
 
-    setStep(steps.finalResult)
+    navigateHomeStep(steps.finalResult)
   }
 
   function spinRoulette() {
-    const nextWinner = participants.includes('영희') ? '영희' : participants[participants.length - 1]
-    setWinner(nextWinner)
-    setStep(steps.rouletteResult)
+    setRouletteSpinning(true)
   }
 
   return (
@@ -118,7 +350,7 @@ function App() {
           <TopBar
             title="누가낼래"
             progress={step === steps.start ? '1/3' : step === steps.amount ? '1/3' : step === steps.participants ? '2/3' : '3/3'}
-            onBack={() => (step === steps.start ? goHome(steps.start) : goHome(steps.start))}
+            onBack={goPreviousHomeStep}
           />
         )}
 
@@ -128,9 +360,9 @@ function App() {
 
         {activeTab === tabs.settings && <SettingsScreen />}
 
-        {activeTab === tabs.home && step === steps.start && <StartScreen onStart={() => setStep(steps.amount)} />}
+        {activeTab === tabs.home && step === steps.start && <StartScreen onStart={() => navigateHomeStep(steps.amount)} />}
         {activeTab === tabs.home && step === steps.amount && (
-          <AmountScreen amount={amount} onAddAmount={addAmount} onReset={() => setAmount(0)} onNext={() => setStep(steps.participants)} />
+          <AmountScreen amount={amount} onAddAmount={addAmount} onInputKey={inputAmountKey} onReset={() => setAmount(0)} onNext={() => navigateHomeStep(steps.participants)} />
         )}
         {activeTab === tabs.home && step === steps.participants && (
           <ParticipantsScreen
@@ -139,20 +371,20 @@ function App() {
             onChangeName={setNewParticipant}
             onRemove={removeParticipant}
             onSubmit={handleParticipantSubmit}
-            onNext={() => setStep(steps.method)}
+            onNext={() => navigateHomeStep(steps.method)}
           />
         )}
         {activeTab === tabs.home && step === steps.method && (
           <MethodScreen selected={settlementMode} onSelect={setSettlementMode} onNext={() => chooseMethod(settlementMode)} />
         )}
         {activeTab === tabs.home && step === steps.exempt && (
-          <ExemptScreen amount={effectiveAmount} people={participants.length} splitAmount={splitAmount} onNext={() => setStep(steps.roulette)} />
+          <ExemptScreen amount={effectiveAmount} people={participants.length} splitAmount={splitAmount} onNext={() => navigateHomeStep(steps.roulette)} />
         )}
         {activeTab === tabs.home && step === steps.roulette && (
-          <RouletteScreen amount={effectiveAmount} participants={participants} onSpin={spinRoulette} />
+          <RouletteScreen amount={effectiveAmount} participants={participants} spinning={rouletteSpinning} onSpin={spinRoulette} />
         )}
         {activeTab === tabs.home && step === steps.rouletteResult && (
-          <RouletteResultScreen amount={effectiveAmount} splitAmount={splitAmount} winner={winner} onRetry={() => setStep(steps.roulette)} onNext={() => setStep(steps.finalResult)} />
+          <RouletteResultScreen amount={effectiveAmount} splitAmount={splitAmount} winner={winner} onRetry={() => navigateHomeStep(steps.roulette)} onNext={() => navigateHomeStep(steps.finalResult)} />
         )}
         {activeTab === tabs.home && step === steps.finalResult && (
           <FinalResultScreen
@@ -171,9 +403,18 @@ function App() {
         <BottomNav activeTab={activeTab} onNavigate={(tab) => {
           setActiveTab(tab)
           setShareOpen(false)
+          setRouletteSpinning(false)
+          setStepHistory([])
         }} />
 
-        {shareOpen && <ShareSheet amount={effectiveAmount} participants={participants} splitAmount={splitAmount} onClose={() => setShareOpen(false)} />}
+        <ShareSheet
+          amount={effectiveAmount}
+          open={shareOpen}
+          participants={participants}
+          splitAmount={splitAmount}
+          winner={winner}
+          onClose={() => setShareOpen(false)}
+        />
       </section>
     </main>
   )
@@ -182,9 +423,13 @@ function App() {
 function TopBar({ title, progress, onBack }) {
   return (
     <header className="top-bar">
-      <button className="icon-button" type="button" aria-label="이전 화면" onClick={onBack}>
-        <Icon>arrow_back</Icon>
-      </button>
+      <IconButton
+        aria-label="이전 화면"
+        bgColor="transparent"
+        src="https://static.toss.im/icons/svg/icon-arrow-left-mono.svg"
+        variant="clear"
+        onClick={onBack}
+      />
       <strong>{title}</strong>
       <span className="progress-pill">{progress}</span>
     </header>
@@ -194,10 +439,12 @@ function TopBar({ title, progress, onBack }) {
 function StartScreen({ onStart }) {
   return (
     <section className="screen start-screen" aria-labelledby="start-title">
-      <div className="hero-copy">
-        <h1 id="start-title">오늘 정산,<br /><span>재미있게 결정해요</span></h1>
-        <p>금액과 참여자를 입력하면 각자 낼 금액을 계산해 드려요.</p>
-      </div>
+      <TdsTitle
+        centered
+        id="start-title"
+        title={<>오늘 정산,<br /><span>재미있게 결정해요</span></>}
+        subtitle="금액과 참여자를 입력하면 각자 낼 금액을 계산해 드려요."
+      />
       <div className="hero-illustration" aria-hidden="true">
         <div className="receipt-card">
           <span className="icon-bubble"><Icon>payments</Icon></span>
@@ -207,43 +454,48 @@ function StartScreen({ onStart }) {
         </div>
         <div className="receipt-shadow" />
       </div>
-      <button className="recent-card" type="button">
-        <span className="icon-bubble muted"><Icon>history</Icon></span>
-        <span>
-          <small>최근 정산 (7월 14일)</small>
-          <strong>강남역 삼겹살 모임</strong>
-        </span>
-        <b>84,000원</b>
-      </button>
-      <button className="primary-button" type="button" onClick={onStart}>
-        정산 시작하기 <Icon>arrow_forward</Icon>
-      </button>
+      <ListRow
+        as="button"
+        className="surface-row recent-row"
+        left={<span className="icon-bubble muted"><Icon>history</Icon></span>}
+        contents={<TextStack description="강남역 삼겹살 모임" meta="최근 정산 (7월 14일)" title="84,000원" />}
+        right={<Icon>chevron_right</Icon>}
+        type="button"
+        withTouchEffect
+      />
+      <ScreenCTA icon="arrow_forward" onClick={onStart}>정산 시작하기</ScreenCTA>
     </section>
   )
 }
 
-function AmountScreen({ amount, onAddAmount, onReset, onNext }) {
+function AmountScreen({ amount, onAddAmount, onInputKey, onReset, onNext }) {
   return (
     <section className="screen amount-screen" aria-labelledby="amount-title">
-      <h1 id="amount-title">얼마를 나눌까요?</h1>
-      <p className="subcopy">정산할 총 금액을 입력해 주세요.</p>
+      <TdsTitle id="amount-title" subtitle="정산할 총 금액을 입력해 주세요." title="얼마를 나눌까요?" />
       <div className="amount-display" aria-live="polite">
         <strong>{formatWon(amount).replace('원', '')}</strong>
         <span>원</span>
       </div>
       <div className="quick-grid" aria-label="빠른 금액 입력">
-        <button type="button" onClick={() => onAddAmount(10000)}>+1만 원</button>
-        <button type="button" onClick={() => onAddAmount(50000)}>+5만 원</button>
-        <button type="button" onClick={() => onAddAmount(100000)}>+10만 원</button>
-        <button type="button" onClick={onReset}>초기화</button>
+        <Button color="primary" size="small" type="button" variant="weak" onClick={() => onAddAmount(10000)}>+1만 원</Button>
+        <Button color="primary" size="small" type="button" variant="weak" onClick={() => onAddAmount(50000)}>+5만 원</Button>
+        <Button color="primary" size="small" type="button" variant="weak" onClick={() => onAddAmount(100000)}>+10만 원</Button>
+        <Button color="dark" size="small" type="button" variant="weak" onClick={onReset}>초기화</Button>
       </div>
-      <div className="keypad" aria-hidden="true">
-        {'123456789.0'.split('').map((key) => <span key={key}>{key}</span>)}
-        <span><Icon>backspace</Icon></span>
+      <div className="keypad" aria-label="금액 숫자 입력">
+        {amountKeys.map((key) => (
+          <button
+            aria-label={key === 'backspace' ? '지우기' : key}
+            className={key === 'backspace' ? 'keypad-key icon-key' : 'keypad-key'}
+            key={key}
+            type="button"
+            onClick={() => onInputKey(key)}
+          >
+            {key === 'backspace' ? <Icon>backspace</Icon> : key}
+          </button>
+        ))}
       </div>
-      <button className="primary-button" type="button" disabled={amount <= 0} onClick={onNext}>
-        참여자 입력하기
-      </button>
+      <ScreenCTA disabled={amount <= 0} onClick={onNext}>참여자 입력하기</ScreenCTA>
     </section>
   )
 }
@@ -251,30 +503,40 @@ function AmountScreen({ amount, onAddAmount, onReset, onNext }) {
 function ParticipantsScreen({ participants, newParticipant, onChangeName, onSubmit, onRemove, onNext }) {
   return (
     <section className="screen participants-screen" aria-labelledby="participants-title">
-      <h1 id="participants-title">누가 함께했나요?</h1>
-      <p className="subcopy">정산에 참여할 멤버들을 추가해주세요.</p>
-      <form className="add-participant" onSubmit={onSubmit}>
-        <label className="sr-only" htmlFor="participant-name">참여자 이름</label>
-        <Icon>person_add</Icon>
-        <input id="participant-name" value={newParticipant} onChange={(event) => onChangeName(event.target.value)} placeholder="이름 입력" />
-        <button type="submit" aria-label="참여자 추가"><Icon>add</Icon></button>
+      <TdsTitle id="participants-title" subtitle="정산에 참여할 멤버들을 추가해주세요." title="누가 함께했나요?" />
+      <form className="participant-form" onSubmit={onSubmit}>
+        <TextField
+          label="참여자 이름"
+          labelOption="sustain"
+          placeholder="이름 입력"
+          right={<Button color="primary" size="small" type="submit">추가</Button>}
+          value={newParticipant}
+          variant="box"
+          onChange={(event) => onChangeName(event.target.value)}
+        />
       </form>
-      <div className="section-title">
-        <span>참여자 목록</span>
-        <strong>총 {participants.length}명</strong>
-        <button type="button">전체 삭제</button>
-      </div>
-      <ul className="member-list">
+      <ListHeader
+        className="compact-list-header"
+        title={<ListHeader.TitleParagraph>참여자 목록</ListHeader.TitleParagraph>}
+        right={<ListHeader.RightText>총 {participants.length}명</ListHeader.RightText>}
+      />
+      <ul className="tds-list member-list">
         {participants.map((participant) => (
-          <li key={participant}>
-            <span className="avatar">{participant.slice(0, 1)}</span>
-            <strong>{participant}</strong>
-            <button type="button" aria-label={`${participant} 삭제`} onClick={() => onRemove(participant)}><Icon>close</Icon></button>
-          </li>
+          <ListRow
+            className="surface-row"
+            key={participant}
+            left={<span className="avatar">{participant.slice(0, 1)}</span>}
+            contents={<TextStack title={participant} />}
+            right={(
+              <Button color="dark" size="small" type="button" variant="weak" onClick={() => onRemove(participant)}>
+                삭제
+              </Button>
+            )}
+          />
         ))}
       </ul>
       <div className="tip-card"><Icon>lightbulb</Icon> 자주 함께하는 친구들을 '즐겨찾기'에서 불러올 수 있습니다.</div>
-      <button className="primary-button" type="button" onClick={onNext}>정산 방식 고르기 <Icon>chevron_right</Icon></button>
+      <ScreenCTA icon="chevron_right" onClick={onNext}>정산 방식 고르기</ScreenCTA>
     </section>
   )
 }
@@ -282,22 +544,29 @@ function ParticipantsScreen({ participants, newParticipant, onChangeName, onSubm
 function MethodScreen({ selected, onSelect, onNext }) {
   return (
     <section className="screen method-screen" aria-labelledby="method-title">
-      <h1 id="method-title">어떻게 나눌까요?</h1>
-      <p className="subcopy">원하시는 정산 방식을 선택해 주세요.</p>
-      <div className="method-list">
+      <TdsTitle id="method-title" subtitle="원하시는 정산 방식을 선택해 주세요." title="어떻게 나눌까요?" />
+      <SegmentedControl alignment="fluid" value={selected} onChange={onSelect}>
         {settlementModes.map((mode) => (
-          <button className={`method-card ${selected === mode.id ? 'selected' : ''}`} key={mode.id} type="button" onClick={() => onSelect(mode.id)}>
-            <span className="icon-bubble"><Icon>{mode.icon}</Icon></span>
-            <span>
-              <strong>{mode.title}</strong>
-              <small>{mode.description}</small>
-            </span>
-            <Icon>{selected === mode.id ? 'check_circle' : 'circle'}</Icon>
-          </button>
+          <SegmentedControl.Item key={mode.id} value={mode.id}>{mode.title}</SegmentedControl.Item>
         ))}
-      </div>
+      </SegmentedControl>
+      <ul className="tds-list method-list">
+        {settlementModes.map((mode) => (
+          <ListRow
+            as="button"
+            className={selected === mode.id ? 'surface-row selected-row' : 'surface-row'}
+            key={mode.id}
+            left={<span className="icon-bubble"><Icon>{mode.icon}</Icon></span>}
+            contents={<TextStack description={mode.description} title={mode.title} />}
+            right={<Icon>{selected === mode.id ? 'check_circle' : 'circle'}</Icon>}
+            type="button"
+            withTouchEffect
+            onClick={() => onSelect(mode.id)}
+          />
+        ))}
+      </ul>
       <div className="info-card"><Icon>info</Icon> 선택한 방식에 따라 정산 결과가 자동으로 계산되어 전송됩니다.</div>
-      <button className="primary-button" type="button" onClick={onNext}>{selected === 'exempt' ? '게임 선택하기' : '결과 확인하기'} <Icon>arrow_forward</Icon></button>
+      <ScreenCTA icon="arrow_forward" onClick={onNext}>{selected === 'exempt' ? '게임 선택하기' : '결과 확인하기'}</ScreenCTA>
     </section>
   )
 }
@@ -305,8 +574,7 @@ function MethodScreen({ selected, onSelect, onNext }) {
 function ExemptScreen({ amount, people, splitAmount, onNext }) {
   return (
     <section className="screen exempt-screen" aria-labelledby="exempt-title">
-      <h1 id="exempt-title">면제 정산을 설정해 주세요</h1>
-      <p className="subcopy">한 명을 무작위로 선택하고, 나머지 인원이 금액을 나눠 냅니다.</p>
+      <TdsTitle id="exempt-title" subtitle="한 명을 무작위로 선택하고, 나머지 인원이 금액을 나눠 냅니다." title="면제 정산을 설정해 주세요" />
       <div className="summary-banner">
         <span>총 정산 금액</span>
         <strong>{formatWon(amount)}</strong>
@@ -335,26 +603,39 @@ function ExemptScreen({ amount, people, splitAmount, onNext }) {
         <p>면제 1명 0원</p>
         <p>나머지 {people - 1}명 (각) 약 {formatWon(splitAmount)}</p>
       </div>
-      <button className="primary-button" type="button" onClick={onNext}><Icon>play_arrow</Icon> 게임 선택하기</button>
+      <ScreenCTA icon="play_arrow" onClick={onNext}>게임 선택하기</ScreenCTA>
     </section>
   )
 }
 
-function RouletteScreen({ amount, participants, onSpin }) {
+function RouletteScreen({ amount, participants, spinning, onSpin }) {
   return (
     <section className="screen roulette-screen" aria-labelledby="roulette-title">
-      <h1 id="roulette-title">오늘의 정산 결과는?</h1>
-      <p className="subcopy">버튼을 눌러 결과를 확인해 보세요.</p>
-      <div className="roulette-wheel" aria-label={`${participants.join(', ')} 룰렛`}>
-        {participants.map((participant, index) => (
-          <span key={participant} style={{ '--slot': index }}>{participant}</span>
-        ))}
+      <TdsTitle centered id="roulette-title" subtitle={spinning ? '잠시만 기다려 주세요. 면제자를 고르고 있어요.' : '버튼을 눌러 결과를 확인해 보세요.'} title="오늘의 정산 결과는?" />
+      <div className="roulette-stage">
+        <div className="roulette-pointer" aria-hidden="true"><Icon>arrow_drop_down</Icon></div>
+        <div
+          className={spinning ? 'roulette-wheel spinning' : 'roulette-wheel'}
+          aria-label={`${participants.join(', ')} 룰렛`}
+          style={{ '--participant-count': participants.length }}
+        >
+          <div className="roulette-core">
+            <Icon>{spinning ? 'sync' : 'casino'}</Icon>
+            <strong>{spinning ? '선택 중' : 'READY'}</strong>
+          </div>
+          {participants.map((participant, index) => (
+            <span key={participant} style={{ '--slot': index }}>{participant}</span>
+          ))}
+        </div>
       </div>
-      <div className="amount-chip">총 결제 금액 {formatWon(amount)}</div>
+      <div className="roulette-summary">
+        <span>총 결제 금액</span>
+        <strong>{formatWon(amount)}</strong>
+      </div>
       <div className="roulette-members">
-        {participants.map((participant) => <span key={participant}>{participant.slice(0, 1)}</span>)}
+        {participants.map((participant) => <span key={participant}>{participant}</span>)}
       </div>
-      <button className="primary-button" type="button" onClick={onSpin}><Icon>refresh</Icon> 룰렛 돌리기</button>
+      <ScreenCTA disabled={spinning} icon={spinning ? 'sync' : 'refresh'} onClick={onSpin}>{spinning ? '룰렛 돌리는 중' : '룰렛 돌리기'}</ScreenCTA>
     </section>
   )
 }
@@ -363,8 +644,7 @@ function RouletteResultScreen({ amount, splitAmount, winner, onRetry, onNext }) 
   return (
     <section className="screen roulette-result-screen" aria-labelledby="roulette-result-title">
       <span className="result-kicker">면제 확정</span>
-      <h1 id="roulette-result-title">{winner} 님이 면제됐어요</h1>
-      <p className="subcopy">나머지 세 명이 {formatWon(splitAmount)}씩 나눠 내요.</p>
+      <TdsTitle centered id="roulette-result-title" subtitle={`나머지 세 명이 ${formatWon(splitAmount)}씩 나눠 내요.`} title={`${winner} 님이 면제됐어요`} />
       <div className="winner-orb">{winner.slice(0, 1)}</div>
       <div className="result-stats">
         <div><small>결제 총액</small><strong>{formatWon(amount)}</strong><Icon>receipt_long</Icon></div>
@@ -372,8 +652,8 @@ function RouletteResultScreen({ amount, splitAmount, winner, onRetry, onNext }) 
         <div><small>1인당 금액</small><strong>{formatWon(splitAmount)}</strong></div>
       </div>
       <div className="button-row">
-        <button className="secondary-button" type="button" onClick={onRetry}><Icon>refresh</Icon> 다시 뽑기</button>
-        <button className="primary-button" type="button" onClick={onNext}>금액 확인하기</button>
+        <Button color="primary" display="full" size="large" type="button" variant="weak" onClick={onRetry}><Icon>refresh</Icon> 다시 뽑기</Button>
+        <Button color="primary" display="full" size="large" type="button" onClick={onNext}>금액 확인하기</Button>
       </div>
     </section>
   )
@@ -383,26 +663,30 @@ function FinalResultScreen({ amount, participants, splitAmount, winner, onRestar
   return (
     <section className="screen final-screen" aria-labelledby="final-title">
       <div className="success-icon"><Icon>check_circle</Icon></div>
-      <h1 id="final-title">정산이 완료됐어요</h1>
-      <p className="subcopy">총 정산 금액</p>
+      <TdsTitle centered id="final-title" subtitle="총 정산 금액" title="정산이 완료됐어요" />
       <strong className="big-amount">{formatWon(amount)}</strong>
       <span className="mode-badge"><Icon>casino</Icon> 한 명 면제 방식 적용</span>
-      <h2>참여자별 금액</h2>
-      <ul className="result-list">
+      <ListHeader
+        className="compact-list-header"
+        title={<ListHeader.TitleParagraph>참여자별 금액</ListHeader.TitleParagraph>}
+      />
+      <ul className="tds-list result-list">
         {participants.map((participant) => (
-          <li className={participant === winner ? 'exempted' : ''} key={participant}>
-            <span className="avatar">{participant.slice(0, 1)}</span>
-            <span><strong>{participant}</strong><small>{participant === winner ? '면제 (0원)' : formatWon(splitAmount)}</small></span>
-            <button type="button" aria-label={`${participant} 금액 수정`}><Icon>edit</Icon></button>
-          </li>
+          <ListRow
+            className={participant === winner ? 'surface-row exempted' : 'surface-row'}
+            key={participant}
+            left={<span className="avatar">{participant.slice(0, 1)}</span>}
+            contents={<TextStack description={participant === winner ? '면제 (0원)' : formatWon(splitAmount)} title={participant} />}
+            right={<Button color="dark" size="small" type="button" variant="weak">수정</Button>}
+          />
         ))}
       </ul>
       <div className="celebration-card"><Icon>celebration</Icon> 운 좋게 {winner} 님이 면제자로 선정되었어요! 남은 인원이 각 {formatWon(splitAmount)}씩 부담합니다.</div>
       <div className="button-row">
-        <button className="secondary-button" type="button"><Icon>image</Icon> 이미지로 저장</button>
-        <button className="secondary-button" type="button" onClick={onRestart}><Icon>refresh</Icon> 새로운 정산</button>
+        <Button color="primary" display="full" size="large" type="button" variant="weak"><Icon>image</Icon> 이미지로 저장</Button>
+        <Button color="primary" display="full" size="large" type="button" variant="weak" onClick={onRestart}><Icon>refresh</Icon> 새로운 정산</Button>
       </div>
-      <button className="primary-button" type="button" onClick={onShare}><Icon>share</Icon> 결과 공유하기</button>
+      <ScreenCTA icon="share" onClick={onShare}>결과 공유하기</ScreenCTA>
     </section>
   )
 }
@@ -418,24 +702,27 @@ function HistoryScreen({ filter, onFilter, onOpenDetail }) {
           <h1 id="history-title">248,500원</h1>
           <p><b>총 12건</b><b>3명과 공유</b></p>
         </div>
-        <div className="filter-row">
-          {['전체', '보낸 정산', '받을 정산'].map((item) => <button className={filter === item ? 'active' : ''} key={item} type="button" onClick={() => onFilter(item)}>{item}</button>)}
-        </div>
-        <div className="history-list">
-          {historyItems.map((item) => (
-            <button className="history-item" key={item.id} type="button" onClick={onOpenDetail}>
-              <span className="icon-bubble"><Icon>{item.icon}</Icon></span>
-              <span>
-                <small>{item.date}</small>
-                <strong>{formatWon(item.amount)}</strong>
-              </span>
-              <span>
-                <em>{item.badge}</em>
-                <small>{item.people}명 참여</small>
-              </span>
-            </button>
+        <SegmentedControl alignment="fluid" value={filter} onChange={onFilter}>
+          {['전체', '보낸 정산', '받을 정산'].map((item) => (
+            <SegmentedControl.Item key={item} value={item}>{item}</SegmentedControl.Item>
           ))}
-        </div>
+        </SegmentedControl>
+        <ul className="tds-list history-list">
+          {historyItems.map((item) => (
+            <ListRow
+              as="button"
+              className="surface-row history-row"
+              key={item.id}
+              left={<span className="icon-bubble"><Icon>{item.icon}</Icon></span>}
+              contents={<TextStack description={formatWon(item.amount)} meta={item.date} title={item.badge} />}
+              right={<small>{item.people}명 참여</small>}
+              type="button"
+              withArrow
+              withTouchEffect
+              onClick={onOpenDetail}
+            />
+          ))}
+        </ul>
         <div className="state-grid">
           <span>로딩: 정산 내역을 불러오는 중</span>
           <span>빈 화면: 아직 정산 내역이 없어요</span>
@@ -451,23 +738,23 @@ function DetailScreen({ amount, splitAmount, winner, onBack, onShare }) {
     <>
       <TopBar title="상세 내역" progress="1/3" onBack={onBack} />
       <section className="screen detail-screen" aria-labelledby="detail-title">
-        <p className="subcopy">7월 14일 정산</p>
-        <h1 id="detail-title">삼겹살 회식 정산</h1>
-        <p className="subcopy">어제 저녁 즐거웠던 모임 기록</p>
+        <TdsTitle id="detail-title" subtitle="어제 저녁 즐거웠던 모임 기록" title="삼겹살 회식 정산" />
         <div className="summary-banner"><span>총 결제 금액</span><strong>{formatWon(amount)}</strong><Icon>auto_awesome</Icon></div>
         <div className="detail-meta"><span><Icon>groups</Icon> 참여자 총 4명</span><span>방식 한 명 면제</span></div>
-        <ul className="result-list">
+        <ul className="tds-list result-list">
           {['민수', '지훈', '수진', winner].map((participant) => (
-            <li className={participant === winner ? 'exempted' : ''} key={participant}>
-              <span className="avatar">{participant.slice(0, 1)}</span>
-              <span><strong>{participant}</strong><small>{participant === winner ? '면제 당첨!' : participant === '지훈' ? '입금 대기' : '입금 완료'}</small></span>
-              <b>{participant === winner ? '0원' : formatWon(splitAmount)}</b>
-            </li>
+            <ListRow
+              className={participant === winner ? 'surface-row exempted' : 'surface-row'}
+              key={participant}
+              left={<span className="avatar">{participant.slice(0, 1)}</span>}
+              contents={<TextStack description={participant === winner ? '면제 당첨!' : participant === '지훈' ? '입금 대기' : '입금 완료'} title={participant} />}
+              right={<b>{participant === winner ? '0원' : formatWon(splitAmount)}</b>}
+            />
           ))}
         </ul>
         <blockquote>"{winner}님의 운이 폭발했던 그 날!"<br />총 1명의 면제자가 선정되었습니다.</blockquote>
-        <button className="danger-button" type="button"><Icon>delete</Icon> 정산 내역 삭제</button>
-        <button className="primary-button" type="button" onClick={onShare}><Icon>share</Icon> 결과 다시 공유하기</button>
+        <Button color="danger" display="full" size="large" type="button"><Icon>delete</Icon> 정산 내역 삭제</Button>
+        <ScreenCTA icon="share" onClick={onShare}>결과 다시 공유하기</ScreenCTA>
       </section>
     </>
   )
@@ -484,13 +771,23 @@ function SettingsScreen() {
           <strong id="settings-title">사용자님</strong>
           <p>settle-user@example.com</p>
         </div>
-        <h2>일반</h2>
-        <SettingsRow icon="help" title="서비스 이용 안내" />
-        <SettingsRow icon="warning" title="정산 내역 전체 삭제" description="삭제된 데이터는 복구할 수 없습니다" danger />
-        <h2>약관 및 지원</h2>
-        <SettingsRow icon="privacy_tip" title="개인정보 처리방침" />
-        <SettingsRow icon="article" title="서비스 이용약관" />
-        <SettingsRow icon="mail" title="문의하기" />
+        <ListHeader
+          className="compact-list-header"
+          title={<ListHeader.TitleParagraph>일반</ListHeader.TitleParagraph>}
+        />
+        <ul className="tds-list">
+          <SettingsRow icon="help" title="서비스 이용 안내" />
+          <SettingsRow danger description="삭제된 데이터는 복구할 수 없습니다" icon="warning" title="정산 내역 전체 삭제" />
+        </ul>
+        <ListHeader
+          className="compact-list-header"
+          title={<ListHeader.TitleParagraph>약관 및 지원</ListHeader.TitleParagraph>}
+        />
+        <ul className="tds-list">
+          <SettingsRow icon="privacy_tip" title="개인정보 처리방침" />
+          <SettingsRow icon="article" title="서비스 이용약관" />
+          <SettingsRow icon="mail" title="문의하기" />
+        </ul>
         <div className="info-card">
           <Icon>info</Icon>
           <span>누가낼래 앱 버전 v1.0.0</span>
@@ -503,20 +800,91 @@ function SettingsScreen() {
 
 function SettingsRow({ icon, title, description, danger = false }) {
   return (
-    <button className={`settings-row ${danger ? 'danger' : ''}`} type="button">
-      <span className="icon-bubble"><Icon>{icon}</Icon></span>
-      <span><strong>{title}</strong>{description && <small>{description}</small>}</span>
-      <Icon>chevron_right</Icon>
-    </button>
+    <ListRow
+      as="button"
+      className={danger ? 'surface-row danger-row' : 'surface-row'}
+      left={<span className="icon-bubble"><Icon>{icon}</Icon></span>}
+      contents={<TextStack description={description} title={title} />}
+      type="button"
+      withArrow
+      withTouchEffect
+    />
   )
 }
 
-function ShareSheet({ amount, participants, splitAmount, onClose }) {
+function ShareSheet({ amount, open, participants, splitAmount, winner, onClose }) {
+  const { openToast } = useWebToast({ exitOnUnmount: false })
+  const [shareActionPending, setShareActionPending] = useState(null)
+  const payload = buildSharePayload({ amount, participants, splitAmount, winner })
+
+  async function runShareAction(action, successMessage, errorMessage) {
+    setShareActionPending(action)
+    try {
+      await action()
+      openToast(successMessage, { duration: 1800 })
+    } catch {
+      openToast(errorMessage, { duration: 2200 })
+    } finally {
+      setShareActionPending(null)
+    }
+  }
+
+  function handleTossShare() {
+    return runShareAction(async () => {
+      const tossLink = await getSettlementShareLink(payload)
+      await share({ message: `${payload.message}\n${tossLink}` })
+    }, '토스 공유창을 열었어요.', '토스 공유를 열지 못했어요.')
+  }
+
+  function handleCopyLink() {
+    return runShareAction(async () => {
+      await copySettlementLink(payload)
+    }, '정산 링크를 복사했어요.', '링크를 복사하지 못했어요.')
+  }
+
+  function handleSaveImage() {
+    return runShareAction(async () => {
+      const data = await createSettlementImageBase64(payload)
+
+      try {
+        await saveBase64Data({
+          data,
+          fileName: payload.fileName,
+          mimeType: 'image/png',
+        })
+      } catch {
+        downloadBase64Image({ data, fileName: payload.fileName })
+      }
+    }, '정산 이미지를 저장했어요.', '이미지를 저장하지 못했어요.')
+  }
+
+  function handleKakaoShare() {
+    return runShareAction(async () => {
+      const tossLink = await getSettlementShareLink(payload)
+      await share({ message: `카카오톡으로 공유해 주세요.\n${payload.message}\n${tossLink}` })
+    }, '공유창에서 카카오톡을 선택해 주세요.', '카카오톡 공유를 열지 못했어요.')
+  }
+
+  const shareActions = [
+    ['payments', '토스로 공유', handleTossShare],
+    ['link', '링크 복사', handleCopyLink],
+    ['download', '이미지 저장', handleSaveImage],
+    ['send', '카카오톡으로 바로 보내기', handleKakaoShare],
+  ]
+
   return (
-    <div className="sheet-backdrop">
-      <section className="share-sheet" role="dialog" aria-modal="true" aria-label="정산 결과 공유">
-        <button className="sheet-close" type="button" aria-label="공유창 닫기" onClick={onClose}><Icon>close</Icon></button>
-        <h2>정산 결과 공유하기</h2>
+    <BottomSheet
+      UNSAFE_disableFocusLock
+      ariaLabelledBy="share-title"
+      className="tds-share-sheet"
+      header={<BottomSheet.Header><span id="share-title">정산 결과 공유하기</span></BottomSheet.Header>}
+      headerDescription={<BottomSheet.HeaderDescription>토스 공유, 링크 복사, 이미지 저장 중 원하는 방식을 선택하세요.</BottomSheet.HeaderDescription>}
+      open={open}
+      onClose={onClose}
+      onDimmerClick={onClose}
+      cta={<BottomSheet.CTA aria-label="공유창 닫기" onClick={onClose}>닫기</BottomSheet.CTA>}
+    >
+      <section aria-label="정산 결과 공유" role="dialog">
         <div className="share-preview">
           <strong>누가낼래</strong>
           <small>2024년 5월 24일 4인 모임</small>
@@ -525,28 +893,51 @@ function ShareSheet({ amount, participants, splitAmount, onClose }) {
           <span>+{Math.max(0, participants.length - 1)}</span>
         </div>
         <div className="share-members">
-          <span>김철수 (본인) {formatWon(splitAmount)}</span>
-          <span>이영희 {formatWon(splitAmount)}</span>
+          {participants.slice(0, 2).map((participant) => (
+            <span key={participant}>{participant} {participant === winner ? '면제' : formatWon(splitAmount)}</span>
+          ))}
         </div>
-        {[
-          ['payments', '토스로 공유'],
-          ['link', '링크 복사'],
-          ['download', '이미지 저장'],
-          ['send', '카카오톡으로 바로 보내기'],
-        ].map(([icon, label]) => (
-          <button className="share-action" type="button" key={label}><Icon>{icon}</Icon>{label}</button>
-        ))}
+        <div className="share-actions">
+          {shareActions.map(([icon, label, onClick]) => (
+            <Button
+              color="dark"
+              disabled={shareActionPending != null}
+              display="full"
+              key={label}
+              size="large"
+              type="button"
+              variant="weak"
+              onClick={onClick}
+            >
+              <Icon>{shareActionPending === onClick ? 'sync' : icon}</Icon>
+              {label}
+            </Button>
+          ))}
+        </div>
       </section>
-    </div>
+    </BottomSheet>
   )
 }
 
 function BottomNav({ activeTab, onNavigate }) {
+  const selectedIndex = tabItems.findIndex((item) => item.id === activeTab)
+
   return (
     <nav className="bottom-nav" aria-label="주요 메뉴">
-      <button aria-label="정산하기" className={activeTab === tabs.home ? 'active' : ''} type="button" onClick={() => onNavigate(tabs.home)}><Icon>payments</Icon><span>정산하기</span></button>
-      <button aria-label="정산 내역" className={activeTab === tabs.history ? 'active' : ''} type="button" onClick={() => onNavigate(tabs.history)}><Icon>history</Icon><span>정산 내역</span></button>
-      <button aria-label="설정" className={activeTab === tabs.settings ? 'active' : ''} type="button" onClick={() => onNavigate(tabs.settings)}><Icon>settings</Icon><span>설정</span></button>
+      <Tab
+        ariaLabel="주요 메뉴"
+        size="small"
+        onChange={(index) => onNavigate(tabItems[index].id)}
+      >
+        {tabItems.map((item, index) => (
+          <Tab.Item key={item.id} selected={selectedIndex === index}>
+            <button aria-label={item.label} className="bottom-tab-button" type="button">
+              <Icon>{item.icon}</Icon>
+              <span>{item.label}</span>
+            </button>
+          </Tab.Item>
+        ))}
+      </Tab>
     </nav>
   )
 }
