@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+
+<html class="light" lang="ko"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>누가낼래 - 정산 상세</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind Configuration -->
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                "secondary-fixed": "#d9e4f0",
+                "primary-fixed-dim": "#acc7ff",
+                "primary-container": "#1071e5",
+                "surface-container-lowest": "#ffffff",
+                "on-primary": "#ffffff",
+                "error": "#ba1a1a",
+                "surface-variant": "#e0e2ec",
+                "outline": "#727785",
+                "on-background": "#181c23",
+                "primary": "#0059b9",
+                "outline-variant": "#c1c6d6",
+                "inverse-on-surface": "#eff0fa",
+                "on-tertiary": "#ffffff",
+                "surface-dim": "#d8d9e3",
+                "surface-container-highest": "#e0e2ec",
+                "on-primary-container": "#fefcff",
+                "tertiary-fixed": "#e7deff",
+                "on-error-container": "#93000a",
+                "on-error": "#ffffff",
+                "tertiary-fixed-dim": "#ccbdff",
+                "on-secondary-fixed": "#121d25",
+                "tertiary": "#6339db",
+                "surface-container": "#ecedf7",
+                "on-surface-variant": "#414754",
+                "on-secondary": "#ffffff",
+                "on-secondary-fixed-variant": "#3d4851",
+                "surface-tint": "#005bbe",
+                "secondary-container": "#d9e4f0",
+                "inverse-primary": "#acc7ff",
+                "on-secondary-container": "#5b6670",
+                "tertiary-container": "#7d56f5",
+                "background": "#f9f9ff",
+                "on-tertiary-fixed": "#1f005f",
+                "surface-bright": "#f9f9ff",
+                "on-tertiary-fixed-variant": "#4d17c5",
+                "error-container": "#ffdad6",
+                "primary-fixed": "#d7e2ff",
+                "on-primary-fixed": "#001a40",
+                "secondary": "#55606a",
+                "surface-container-high": "#e6e8f2",
+                "on-surface": "#181c23",
+                "secondary-fixed-dim": "#bdc8d3",
+                "surface": "#f9f9ff",
+                "inverse-surface": "#2d3038",
+                "on-tertiary-container": "#fffbff",
+                "on-primary-fixed-variant": "#004491",
+                "surface-container-low": "#f2f3fd"
+            },
+            "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+            },
+            "spacing": {
+                "sm": "12px",
+                "card-gap": "12px",
+                "base": "8px",
+                "xl": "32px",
+                "container-padding": "20px",
+                "md": "16px",
+                "xs": "4px",
+                "lg": "24px"
+            },
+            "fontFamily": {
+                "body-md-bold": ["Plus Jakarta Sans"],
+                "body-lg-bold": ["Plus Jakarta Sans"],
+                "display-lg": ["Plus Jakarta Sans"],
+                "label-md": ["Plus Jakarta Sans"],
+                "headline-lg": ["Plus Jakarta Sans"],
+                "body-lg-reg": ["Plus Jakarta Sans"],
+                "headline-md": ["Plus Jakarta Sans"],
+                "label-sm": ["Plus Jakarta Sans"],
+                "body-md-reg": ["Plus Jakarta Sans"]
+            },
+            "fontSize": {
+                "body-md-bold": ["16px", {"lineHeight": "24px", "fontWeight": "600"}],
+                "body-lg-bold": ["18px", {"lineHeight": "26px", "fontWeight": "700"}],
+                "display-lg": ["36px", {"lineHeight": "48px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                "label-md": ["14px", {"lineHeight": "20px", "fontWeight": "500"}],
+                "headline-lg": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "700"}],
+                "body-lg-reg": ["18px", {"lineHeight": "26px", "fontWeight": "400"}],
+                "headline-md": ["20px", {"lineHeight": "28px", "letterSpacing": "-0.01em", "fontWeight": "700"}],
+                "label-sm": ["12px", {"lineHeight": "16px", "letterSpacing": "0.02em", "fontWeight": "500"}],
+                "body-md-reg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+</head>
+<body class="bg-background text-on-surface min-h-screen flex flex-col">
+<!-- TopAppBar -->
+<header class="flex justify-between items-center px-container-padding h-14 w-full z-50 bg-surface fixed top-0 left-0">
+<div class="flex items-center gap-4">
+<button class="active:scale-95 transition-transform duration-200">
+<span class="material-symbols-outlined text-primary" data-icon="arrow_back">arrow_back</span>
+</button>
+<h1 class="font-headline-md text-headline-md text-primary">상세 내역</h1>
+</div>
+<div class="font-label-md text-label-md text-on-surface-variant">1/3</div>
+</header>
+<!-- Main Content Area -->
+<main class="flex-grow pt-14 pb-40 px-container-padding">
+<!-- Header Info -->
+<section class="mt-lg mb-xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+<div class="flex items-center gap-2 mb-xs">
+<span class="px-2 py-1 bg-primary-container/10 text-primary-container rounded-lg font-label-sm text-label-sm">
+                    7월 14일 정산
+                </span>
+</div>
+<h2 class="font-display-lg text-display-lg text-on-surface mb-xs">삼겹살 회식 정산</h2>
+<p class="font-body-md-reg text-body-md-reg text-on-surface-variant">어제 저녁 즐거웠던 모임 기록</p>
+</section>
+<!-- Summary Card: Bento Style -->
+<section class="grid grid-cols-2 gap-card-gap mb-xl">
+<div class="col-span-2 bg-surface-container-lowest p-lg rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.05)] border border-outline-variant/20">
+<p class="font-label-md text-label-md text-on-surface-variant mb-xs">총 결제 금액</p>
+<div class="flex items-baseline gap-1">
+<span class="font-headline-lg text-headline-lg text-primary">84,000</span>
+<span class="font-body-md-bold text-body-md-bold text-primary">원</span>
+</div>
+</div>
+<div class="bg-secondary-container p-md rounded-xl flex flex-col justify-between">
+<span class="material-symbols-outlined text-on-secondary-container" data-icon="auto_awesome">auto_awesome</span>
+<div>
+<p class="font-label-sm text-label-sm text-on-secondary-container">방식</p>
+<p class="font-body-md-bold text-body-md-bold text-on-secondary-container">한 명 면제</p>
+</div>
+</div>
+<div class="bg-surface-container-high p-md rounded-xl flex flex-col justify-between">
+<span class="material-symbols-outlined text-primary" data-icon="groups">groups</span>
+<div>
+<p class="font-label-sm text-label-sm text-on-surface-variant">참여자</p>
+<p class="font-body-md-bold text-body-md-bold text-on-surface">총 4명</p>
+</div>
+</div>
+</section>
+<!-- Participant List Section -->
+<section class="mb-xl">
+<div class="flex justify-between items-end mb-md">
+<h3 class="font-headline-md text-headline-md text-on-surface">참여자별 상세</h3>
+<span class="font-label-md text-label-md text-on-surface-variant">인당 28,000원</span>
+</div>
+<div class="space-y-sm">
+<!-- Member 1 -->
+<div class="bg-surface-container-lowest p-md rounded-xl flex items-center justify-between border border-outline-variant/10 shadow-sm transition-all active:scale-98">
+<div class="flex items-center gap-md">
+<div class="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center">
+<span class="material-symbols-outlined text-on-primary-fixed" data-icon="person">person</span>
+</div>
+<div>
+<p class="font-body-md-bold text-body-md-bold">민수</p>
+<p class="font-label-sm text-label-sm text-on-surface-variant">입금 완료</p>
+</div>
+</div>
+<div class="text-right">
+<p class="font-body-lg-bold text-body-lg-bold text-on-surface">28,000원</p>
+</div>
+</div>
+<!-- Member 2 -->
+<div class="bg-surface-container-lowest p-md rounded-xl flex items-center justify-between border border-outline-variant/10 shadow-sm transition-all active:scale-98">
+<div class="flex items-center gap-md">
+<div class="w-10 h-10 rounded-full bg-secondary-fixed flex items-center justify-center">
+<span class="material-symbols-outlined text-on-secondary-fixed" data-icon="person">person</span>
+</div>
+<div>
+<p class="font-body-md-bold text-body-md-bold">지훈</p>
+<p class="font-label-sm text-label-sm text-on-surface-variant">입금 대기</p>
+</div>
+</div>
+<div class="text-right">
+<p class="font-body-lg-bold text-body-lg-bold text-on-surface">28,000원</p>
+</div>
+</div>
+<!-- Member 3 -->
+<div class="bg-surface-container-lowest p-md rounded-xl flex items-center justify-between border border-outline-variant/10 shadow-sm transition-all active:scale-98">
+<div class="flex items-center gap-md">
+<div class="w-10 h-10 rounded-full bg-tertiary-fixed flex items-center justify-center">
+<span class="material-symbols-outlined text-on-tertiary-fixed" data-icon="person">person</span>
+</div>
+<div>
+<p class="font-body-md-bold text-body-md-bold">수진</p>
+<p class="font-label-sm text-label-sm text-on-surface-variant">입금 완료</p>
+</div>
+</div>
+<div class="text-right">
+<p class="font-body-lg-bold text-body-lg-bold text-on-surface">28,000원</p>
+</div>
+</div>
+<!-- Exempt Member -->
+<div class="bg-surface-container-low p-md rounded-xl flex items-center justify-between border border-dashed border-outline-variant transition-all opacity-80">
+<div class="flex items-center gap-md">
+<div class="w-10 h-10 rounded-full bg-outline-variant flex items-center justify-center">
+<span class="material-symbols-outlined text-on-surface-variant" data-icon="celebration">celebration</span>
+</div>
+<div>
+<p class="font-body-md-bold text-body-md-bold text-on-surface-variant">영희</p>
+<p class="font-label-sm text-label-sm text-primary font-bold">면제 당첨!</p>
+</div>
+</div>
+<div class="text-right">
+<p class="font-body-lg-bold text-body-lg-bold text-on-surface-variant line-through">28,000원</p>
+<p class="font-label-sm text-label-sm text-primary">0원</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Visualization/Atmospheric -->
+<section class="mt-xl">
+<div class="relative w-full h-32 rounded-2xl overflow-hidden bg-primary-container/5">
+
+<div class="absolute inset-0 flex flex-col items-center justify-center p-md">
+<p class="font-label-md text-label-md text-primary text-center">"영희님의 운이 폭발했던 그 날!"</p>
+<p class="font-label-sm text-label-sm text-on-surface-variant mt-xs">총 1명의 면제자가 선정되었습니다.</p>
+</div>
+</div>
+</section>
+<!-- Delete Action -->
+<section class="mt-xl flex justify-center">
+<button class="flex items-center gap-2 px-6 py-3 rounded-full hover:bg-error-container/10 transition-colors group">
+<span class="material-symbols-outlined text-error text-[20px]" data-icon="delete">delete</span>
+<span class="font-label-md text-label-md text-error">정산 내역 삭제</span>
+</button>
+</section>
+</main>
+<!-- Bottom Action Bar -->
+<footer class="fixed bottom-0 left-0 w-full bg-surface-container-lowest/80 backdrop-blur-md p-container-padding safe-bottom z-50">
+<button class="w-full h-14 bg-primary text-on-primary rounded-xl font-body-lg-bold text-body-lg-bold shadow-lg flex items-center justify-center gap-2 active:scale-[0.98] transition-transform duration-150">
+<span class="material-symbols-outlined" data-icon="share" style="font-variation-settings: 'FILL' 1;">share</span>
+            결과 다시 공유하기
+        </button>
+</footer>
+<script>
+        // Micro-interaction for list items
+        document.querySelectorAll('.active\\:scale-98').forEach(item => {
+            item.addEventListener('touchstart', () => {
+                item.style.transform = 'scale(0.98)';
+            });
+            item.addEventListener('touchend', () => {
+                item.style.transform = 'scale(1)';
+            });
+        });
+    </script>
+</body></html>

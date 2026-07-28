@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+
+<html class="light" lang="ko"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>누가낼래 - 정산 결과 공유</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;family=Noto+Sans+KR:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        body {
+            font-family: 'Plus Jakarta Sans', 'Noto Sans KR', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .bottom-sheet-enter {
+            animation: slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        @keyframes slide-up {
+            from { transform: translateY(100%); }
+            to { transform: translateY(0); }
+        }
+        .dimmed-overlay {
+            background-color: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(4px);
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        /* Mobile-first constraints */
+        @media (max-width: 768px) {
+            .mobile-container {
+                max-width: 100%;
+            }
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "secondary-fixed": "#d9e4f0",
+                      "primary-fixed-dim": "#acc7ff",
+                      "primary-container": "#1071e5",
+                      "surface-container-lowest": "#ffffff",
+                      "on-primary": "#ffffff",
+                      "error": "#ba1a1a",
+                      "surface-variant": "#e0e2ec",
+                      "outline": "#727785",
+                      "on-background": "#181c23",
+                      "primary": "#0059b9",
+                      "outline-variant": "#c1c6d6",
+                      "inverse-on-surface": "#eff0fa",
+                      "on-tertiary": "#ffffff",
+                      "surface-dim": "#d8d9e3",
+                      "surface-container-highest": "#e0e2ec",
+                      "on-primary-container": "#fefcff",
+                      "tertiary-fixed": "#e7deff",
+                      "on-error-container": "#93000a",
+                      "on-error": "#ffffff",
+                      "tertiary-fixed-dim": "#ccbdff",
+                      "on-secondary-fixed": "#121d25",
+                      "tertiary": "#6339db",
+                      "surface-container": "#ecedf7",
+                      "on-surface-variant": "#414754",
+                      "on-secondary": "#ffffff",
+                      "on-secondary-fixed-variant": "#3d4851",
+                      "surface-tint": "#005bbe",
+                      "secondary-container": "#d9e4f0",
+                      "inverse-primary": "#acc7ff",
+                      "on-secondary-container": "#5b6670",
+                      "tertiary-container": "#7d56f5",
+                      "background": "#f9f9ff",
+                      "on-tertiary-fixed": "#1f005f",
+                      "surface-bright": "#f9f9ff",
+                      "on-tertiary-fixed-variant": "#4d17c5",
+                      "error-container": "#ffdad6",
+                      "primary-fixed": "#d7e2ff",
+                      "on-primary-fixed": "#001a40",
+                      "secondary": "#55606a",
+                      "surface-container-high": "#e6e8f2",
+                      "on-surface": "#181c23",
+                      "secondary-fixed-dim": "#bdc8d3",
+                      "surface": "#f9f9ff",
+                      "inverse-surface": "#2d3038",
+                      "on-tertiary-container": "#fffbff",
+                      "on-primary-fixed-variant": "#004491",
+                      "surface-container-low": "#f2f3fd"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "sm": "12px",
+                      "card-gap": "12px",
+                      "base": "8px",
+                      "xl": "32px",
+                      "container-padding": "20px",
+                      "md": "16px",
+                      "xs": "4px",
+                      "lg": "24px"
+              },
+              "fontFamily": {
+                      "body-md-bold": ["Plus Jakarta Sans"],
+                      "body-lg-bold": ["Plus Jakarta Sans"],
+                      "display-lg": ["Plus Jakarta Sans"],
+                      "label-md": ["Plus Jakarta Sans"],
+                      "headline-lg": ["Plus Jakarta Sans"],
+                      "body-lg-reg": ["Plus Jakarta Sans"],
+                      "headline-md": ["Plus Jakarta Sans"],
+                      "label-sm": ["Plus Jakarta Sans"],
+                      "body-md-reg": ["Plus Jakarta Sans"]
+              },
+              "fontSize": {
+                      "body-md-bold": ["16px", {"lineHeight": "24px", "fontWeight": "600"}],
+                      "body-lg-bold": ["18px", {"lineHeight": "26px", "fontWeight": "700"}],
+                      "display-lg": ["36px", {"lineHeight": "48px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                      "label-md": ["14px", {"lineHeight": "20px", "fontWeight": "500"}],
+                      "headline-lg": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "700"}],
+                      "body-lg-reg": ["18px", {"lineHeight": "26px", "fontWeight": "400"}],
+                      "headline-md": ["20px", {"lineHeight": "28px", "letterSpacing": "-0.01em", "fontWeight": "700"}],
+                      "label-sm": ["12px", {"lineHeight": "16px", "letterSpacing": "0.02em", "fontWeight": "500"}],
+                      "body-md-reg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}]
+              }
+            },
+          },
+        }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-surface">
+<!-- Screen Wrapper (Simulating Mobile Viewport) -->
+<div class="relative min-h-screen flex flex-col items-center justify-center overflow-hidden">
+<!-- Mock Background: Final Settlement Screen -->
+<div class="w-full max-w-md h-full min-h-screen bg-background relative z-0 filter blur-[2px]">
+<!-- TopAppBar -->
+<header class="flex justify-between items-center px-container-padding h-14 w-full z-50 bg-surface">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-primary">arrow_back</span>
+<h1 class="font-headline-md text-headline-md font-black text-primary">누가낼래</h1>
+</div>
+<div class="font-label-md text-label-md text-primary">3/3</div>
+</header>
+<main class="p-container-padding space-y-lg">
+<div class="text-center space-y-xs pt-base">
+<h2 class="font-headline-lg text-headline-lg text-on-surface">정산이 완료되었습니다!</h2>
+<p class="font-body-md-reg text-body-md-reg text-on-surface-variant">친구들에게 결과를 공유해보세요.</p>
+</div>
+<div class="bg-white rounded-[24px] p-lg shadow-sm space-y-md border border-surface-variant">
+<div class="flex justify-between items-center">
+<span class="font-label-md text-label-md text-on-surface-variant">총 결제 금액</span>
+<span class="font-headline-md text-headline-md text-on-surface">124,000원</span>
+</div>
+<div class="h-px bg-surface-variant w-full"></div>
+<div class="space-y-sm">
+<div class="flex justify-between items-center">
+<span class="font-body-md-reg text-body-md-reg text-on-surface">김철수 (본인)</span>
+<span class="font-body-md-bold text-body-md-bold text-primary">31,000원</span>
+</div>
+<div class="flex justify-between items-center">
+<span class="font-body-md-reg text-body-md-reg text-on-surface">이영희</span>
+<span class="font-body-md-bold text-body-md-bold text-on-surface">31,000원</span>
+</div>
+</div>
+</div>
+</main>
+</div>
+<!-- Dimmed Overlay -->
+<div class="fixed inset-0 z-10 dimmed-overlay flex items-end justify-center">
+<!-- Bottom Sheet -->
+<div class="bottom-sheet-enter w-full max-w-md bg-white rounded-t-[32px] p-container-padding pb-xl shadow-lg relative z-20">
+<!-- Handle Bar -->
+<div class="flex justify-center mb-lg">
+<div class="w-10 h-1.5 bg-outline-variant rounded-full opacity-50"></div>
+</div>
+<!-- Title -->
+<div class="flex justify-between items-center mb-lg">
+<h3 class="font-headline-md text-headline-md text-on-surface">정산 결과 공유하기</h3>
+<button class="p-xs text-on-surface-variant hover:bg-surface-variant rounded-full transition-colors">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<!-- Sharing Card Preview (The "Bento-style" high-end preview) -->
+<div class="relative mb-xl group">
+<div class="absolute -inset-1 bg-gradient-to-r from-primary to-tertiary-container rounded-[28px] blur opacity-10 group-hover:opacity-20 transition duration-1000"></div>
+<div class="relative bg-white border border-surface-variant rounded-[24px] overflow-hidden shadow-[0px_8px_32px_rgba(49,130,246,0.1)]">
+<!-- Card Header -->
+<div class="p-lg bg-gradient-to-br from-primary to-primary-container text-white flex justify-between items-start">
+<div>
+<div class="font-headline-lg text-headline-lg font-black tracking-tight">누가낼래</div>
+<div class="font-label-sm text-label-sm opacity-80">2024년 5월 24일</div>
+</div>
+<div class="bg-white/20 backdrop-blur-md rounded-full px-3 py-1 font-label-sm text-label-sm">
+                                4인 모임
+                            </div>
+</div>
+<!-- Card Body -->
+<div class="p-lg space-y-md">
+<div class="flex flex-col">
+<span class="font-label-md text-label-md text-on-surface-variant">총 정산 금액</span>
+<span class="font-display-lg text-display-lg text-on-surface">₩124,000</span>
+</div>
+<div class="flex -space-x-2">
+<div class="w-8 h-8 rounded-full border-2 border-white bg-secondary-fixed flex items-center justify-center overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="A minimalist professional profile avatar portrait of a person with friendly features, clean lines, soft corporate lighting, part of a high-end fintech app design language." src="https://lh3.googleusercontent.com/aida-public/AB6AXuC7XLGTiySXQQXja3dBN4hs2lIEKBp0QAlX0xV3iOvS4XIYs3s52zgDouCrCnQNdeDTpnlaY154SjCuaWnCzPp3pjKArGp12CwNsdoSkDyHz_Lo2tOFXfo1SknO3uRUECXZ3ZXX-cTSVwG5mcL5SjTBouVCQGukAR77odZb2va8etkbkBdkQqFGl-OChFmFBrsPztBTSyNBIIi6jfry39NHeN672qXmRLn2MCWCIKLGmniyu3S5vv1RgijLzVPGxlj_r3--Xht7cBw"/>
+</div>
+<div class="w-8 h-8 rounded-full border-2 border-white bg-tertiary-fixed flex items-center justify-center overflow-hidden text-tertiary font-label-sm">+3</div>
+</div>
+</div>
+<!-- Card Decorative Element -->
+<div class="absolute bottom-0 right-0 p-4">
+<span class="material-symbols-outlined text-surface-variant text-[48px] opacity-30 select-none">receipt_long</span>
+</div>
+</div>
+</div>
+<!-- Sharing Options -->
+<div class="grid grid-cols-3 gap-md">
+<!-- Toss -->
+<button class="flex flex-col items-center gap-sm group active:scale-95 transition-transform">
+<div class="w-14 h-14 bg-secondary-container text-primary rounded-2xl flex items-center justify-center group-hover:bg-primary-fixed transition-colors">
+<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">payments</span>
+</div>
+<span class="font-label-md text-label-md text-on-surface-variant">토스로 공유</span>
+</button>
+<!-- Copy Link -->
+<button class="flex flex-col items-center gap-sm group active:scale-95 transition-transform">
+<div class="w-14 h-14 bg-surface-container-high text-on-surface-variant rounded-2xl flex items-center justify-center group-hover:bg-outline-variant transition-colors">
+<span class="material-symbols-outlined text-[28px]">link</span>
+</div>
+<span class="font-label-md text-label-md text-on-surface-variant">링크 복사</span>
+</button>
+<!-- Save Image -->
+<button class="flex flex-col items-center gap-sm group active:scale-95 transition-transform">
+<div class="w-14 h-14 bg-surface-container-high text-on-surface-variant rounded-2xl flex items-center justify-center group-hover:bg-outline-variant transition-colors">
+<span class="material-symbols-outlined text-[28px]">download</span>
+</div>
+<span class="font-label-md text-label-md text-on-surface-variant">이미지 저장</span>
+</button>
+</div>
+<!-- Secondary Actions -->
+<div class="mt-xl">
+<button class="w-full h-14 bg-primary text-white rounded-xl font-body-lg-bold text-body-lg-bold hover:bg-primary-container active:scale-98 transition-all duration-150 flex items-center justify-center gap-2">
+<span class="material-symbols-outlined">send</span>
+                        카카오톡으로 바로 보내기
+                    </button>
+</div>
+</div>
+</div>
+</div>
+<!-- Micro-interaction Script -->
+<script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const buttons = document.querySelectorAll('button');
+            
+            buttons.forEach(button => {
+                button.addEventListener('click', function(e) {
+                    // Visual feedback for interactions
+                    const ripple = document.createElement('span');
+                    ripple.classList.add('ripple');
+                    this.appendChild(ripple);
+                    setTimeout(() => ripple.remove(), 600);
+                });
+            });
+        });
+    </script>
+<!-- BottomNavBar (Hidden in focused sharing flow but defined as per JSON) -->
+<nav class="fixed bottom-0 left-0 w-full z-30 flex justify-around items-center px-4 py-2 pb-safe bg-surface-container-lowest shadow-lg rounded-t-xl hidden">
+<div class="flex flex-col items-center justify-center text-primary bg-secondary-container rounded-full px-4 py-1">
+<span class="material-symbols-outlined" data-icon="payments">payments</span>
+<span class="font-label-sm text-label-sm">정산하기</span>
+</div>
+<div class="flex flex-col items-center justify-center text-on-surface-variant">
+<span class="material-symbols-outlined" data-icon="history">history</span>
+<span class="font-label-sm text-label-sm">정산 내역</span>
+</div>
+<div class="flex flex-col items-center justify-center text-on-surface-variant">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="font-label-sm text-label-sm">설정</span>
+</div>
+</nav>
+</body></html>

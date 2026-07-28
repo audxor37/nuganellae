@@ -10,12 +10,17 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@apps-in-toss/web-framework": "^2.10.7",
+    "@emotion/react": "^11.14.0",
+    "@toss/tds-mobile": "^2.5.0",
+    "@toss/tds-mobile-ait": "^2.0.7",
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^6.0.5",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "vite": "^6.0.5"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "jsdom": "^25.0.1",

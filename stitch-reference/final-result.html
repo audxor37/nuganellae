@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+
+<html class="light" lang="ko"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;family=Noto+Sans+KR:wght@400;500;700;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        body {
+            font-family: 'Plus Jakarta Sans', 'Noto Sans KR', sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        .safe-bottom {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+    </style>
+<!-- Tailwind Config Injection -->
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "secondary-fixed": "#d9e4f0",
+                    "primary-fixed-dim": "#acc7ff",
+                    "primary-container": "#1071e5",
+                    "surface-container-lowest": "#ffffff",
+                    "on-primary": "#ffffff",
+                    "error": "#ba1a1a",
+                    "surface-variant": "#e0e2ec",
+                    "outline": "#727785",
+                    "on-background": "#181c23",
+                    "primary": "#3182F6",
+                    "outline-variant": "#c1c6d6",
+                    "inverse-on-surface": "#eff0fa",
+                    "on-tertiary": "#ffffff",
+                    "surface-dim": "#d8d9e3",
+                    "surface-container-highest": "#e0e2ec",
+                    "on-primary-container": "#fefcff",
+                    "tertiary-fixed": "#e7deff",
+                    "on-error-container": "#93000a",
+                    "on-error": "#ffffff",
+                    "tertiary-fixed-dim": "#ccbdff",
+                    "on-secondary-fixed": "#121d25",
+                    "tertiary": "#6339db",
+                    "surface-container": "#ecedf7",
+                    "on-surface-variant": "#414754",
+                    "on-secondary": "#ffffff",
+                    "on-secondary-fixed-variant": "#3d4851",
+                    "surface-tint": "#005bbe",
+                    "secondary-container": "#d9e4f0",
+                    "inverse-primary": "#acc7ff",
+                    "on-secondary-container": "#5b6670",
+                    "tertiary-container": "#7d56f5",
+                    "background": "#F2F4F6",
+                    "on-tertiary-fixed": "#1f005f",
+                    "surface-bright": "#f9f9ff",
+                    "on-tertiary-fixed-variant": "#4d17c5",
+                    "error-container": "#ffdad6",
+                    "primary-fixed": "#d7e2ff",
+                    "on-primary-fixed": "#001a40",
+                    "secondary": "#55606a",
+                    "surface-container-high": "#e6e8f2",
+                    "on-surface": "#181c23",
+                    "secondary-fixed-dim": "#bdc8d3",
+                    "surface": "#ffffff",
+                    "inverse-surface": "#2d3038",
+                    "on-tertiary-container": "#fffbff",
+                    "on-primary-fixed-variant": "#004491",
+                    "surface-container-low": "#f2f3fd"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "16px",
+                    "2xl": "24px",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "sm": "12px",
+                    "card-gap": "12px",
+                    "base": "8px",
+                    "xl": "32px",
+                    "container-padding": "20px",
+                    "md": "16px",
+                    "xs": "4px",
+                    "lg": "24px"
+            },
+            "fontFamily": {
+                    "body-md-bold": ["Plus Jakarta Sans", "Noto Sans KR"],
+                    "body-lg-bold": ["Plus Jakarta Sans", "Noto Sans KR"],
+                    "display-lg": ["Plus Jakarta Sans", "Noto Sans KR"],
+                    "label-md": ["Plus Jakarta Sans", "Noto Sans KR"],
+                    "headline-lg": ["Plus Jakarta Sans", "Noto Sans KR"],
+                    "body-lg-reg": ["Plus Jakarta Sans", "Noto Sans KR"],
+                    "headline-md": ["Plus Jakarta Sans", "Noto Sans KR"],
+                    "label-sm": ["Plus Jakarta Sans", "Noto Sans KR"],
+                    "body-md-reg": ["Plus Jakarta Sans", "Noto Sans KR"]
+            },
+            "fontSize": {
+                    "body-md-bold": ["16px", {"lineHeight": "24px", "fontWeight": "600"}],
+                    "body-lg-bold": ["18px", {"lineHeight": "26px", "fontWeight": "700"}],
+                    "display-lg": ["36px", {"lineHeight": "48px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                    "label-md": ["14px", {"lineHeight": "20px", "fontWeight": "500"}],
+                    "headline-lg": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "700"}],
+                    "body-lg-reg": ["18px", {"lineHeight": "26px", "fontWeight": "400"}],
+                    "headline-md": ["20px", {"lineHeight": "28px", "letterSpacing": "-0.01em", "fontWeight": "700"}],
+                    "label-sm": ["12px", {"lineHeight": "16px", "letterSpacing": "0.02em", "fontWeight": "500"}],
+                    "body-md-reg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-surface min-h-screen pb-40">
+<!-- Top Navigation Bar (Shared Component Strategy) -->
+<header class="flex justify-between items-center px-container-padding h-14 w-full sticky top-0 z-50 bg-surface/80 backdrop-blur-md">
+<div class="flex items-center gap-2">
+<button class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-low active:scale-95 transition-all">
+<span class="material-symbols-outlined text-on-surface">arrow_back</span>
+</button>
+<h1 class="font-headline-md text-headline-md font-black text-primary">누가낼래</h1>
+</div>
+<div class="flex items-center gap-4">
+<span class="font-label-md text-label-md text-on-surface-variant bg-surface-container-high px-3 py-1 rounded-full">완료</span>
+</div>
+</header>
+<main class="px-container-padding pt-8 max-w-md mx-auto">
+<!-- Success Header Section -->
+<section class="mb-xl text-center">
+<div class="inline-flex items-center justify-center w-16 h-16 bg-primary-container rounded-full mb-4 shadow-lg shadow-primary/20">
+<span class="material-symbols-outlined text-on-primary text-3xl" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+</div>
+<h2 class="font-display-lg text-display-lg mb-2">정산이 완료됐어요</h2>
+<div class="flex flex-col items-center">
+<p class="font-body-md-reg text-on-surface-variant mb-1">총 정산 금액</p>
+<p class="font-display-lg text-display-lg text-primary">84,000원</p>
+<div class="mt-2 bg-secondary-container text-on-secondary-container px-3 py-1 rounded-lg flex items-center gap-1.5">
+<span class="material-symbols-outlined text-sm">casino</span>
+<span class="font-label-md text-label-md">한 명 면제 방식 적용</span>
+</div>
+</div>
+</section>
+<!-- Settlement List -->
+<section class="space-y-card-gap">
+<h3 class="font-label-md text-label-md text-on-surface-variant px-1 mb-2 uppercase tracking-wider">참여자별 금액</h3>
+<!-- List Items -->
+<div class="space-y-3">
+<!-- Participant: 민수 -->
+<div class="bg-surface rounded-2xl p-md shadow-[0px_4px_20px_rgba(0,0,0,0.05)] flex justify-between items-center group transition-transform active:scale-[0.98]">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-full overflow-hidden border-2 border-surface-container-high bg-surface-container-low flex items-center justify-center">
+<img class="w-full h-full object-cover" data-alt="A high-quality 3D avatar character portrait of a young man with trendy black hair and a friendly expression, styled in a minimalist fintech aesthetic with soft lighting and a clean pastel background. The image is professional yet approachable, following a modern digital art style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDa5r3eFTZ_SOJsODU43uiwdkFPkQXCjy3jGGjj72D362abuNbtpyPXBnQt_TaGpZZ0xptky7AW7KS8HJIIW7Ue9xRlnC6bgO_HRaoDH_z7LBtqtNnS86lw5CTbfZGCSnfSBQpyDQqPROQWv2XDoiyvQh8rzhYIGBiSIGlzL4f0i-v_m_n4N1pqU6DIf9XEsAFAqIECGADAms-xGubRl8rA0PGabuyEWi6OCMbuAzjpMidMAweWX-rZuyhuFn4qZTpylKG3PELgXtU"/>
+</div>
+<div>
+<p class="font-body-md-bold text-body-md-bold">민수</p>
+<p class="font-label-sm text-label-sm text-on-surface-variant">28,000원</p>
+</div>
+</div>
+<button class="w-10 h-10 flex items-center justify-center rounded-xl bg-surface-container-low text-on-surface-variant hover:bg-secondary-container hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+</div>
+<!-- Participant: 지훈 -->
+<div class="bg-surface rounded-2xl p-md shadow-[0px_4px_20px_rgba(0,0,0,0.05)] flex justify-between items-center group transition-transform active:scale-[0.98]">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-full overflow-hidden border-2 border-surface-container-high bg-surface-container-low flex items-center justify-center">
+<img class="w-full h-full object-cover" data-alt="A clean, minimalist 3D character illustration of a male user with a spectacles, wearing a modern navy hoodie. The visual style is inspired by modern tech brand aesthetics with soft shadows, high-key studio lighting, and a professional blue and white color palette." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBE6uo1PnsnSjmRGyqiKSWutkEUpyuIsvBsh6dreIph2qrXeIzmh7LjvEJeLxS6bjh-PN3SvTyJCEwIMSMgnZZ5r8bY-LfqQXPdRyDllYeAOZhTFgOnAdPS_mCb1NJ9DVEXT_6PG7EkIDdDPvWszriKJ5zoZKUHySp23Cb3h-Dgbsr-VwYozOR-ntEEqoGo50wzSvXsLuP1jrKCAKxoiqhYvIhmvLFz17B-i-qas9ZFBsR0ksnson9YNLnJJ-lpXlnBxH4u7-1Mz6o"/>
+</div>
+<div>
+<p class="font-body-md-bold text-body-md-bold">지훈</p>
+<p class="font-label-sm text-label-sm text-on-surface-variant">28,000원</p>
+</div>
+</div>
+<button class="w-10 h-10 flex items-center justify-center rounded-xl bg-surface-container-low text-on-surface-variant hover:bg-secondary-container hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+</div>
+<!-- Participant: 수진 -->
+<div class="bg-surface rounded-2xl p-md shadow-[0px_4px_20px_rgba(0,0,0,0.05)] flex justify-between items-center group transition-transform active:scale-[0.98]">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-full overflow-hidden border-2 border-surface-container-high bg-surface-container-low flex items-center justify-center">
+<img class="w-full h-full object-cover" data-alt="A minimalist 3D avatar of a young woman with a bob hairstyle, wearing a bright white sweater. The design uses high-quality soft-surface rendering typical of premium fintech mobile apps, with a clean and professional aesthetic against a light grey background." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAdYknqtSnh435Mi_s65aPS26Pr90ISQlw4n_ak0nwaIemtIQmjkITSa_iICdB_GGLai-D2yLIRDe8tHyyzBNvfsFm1M81fJVfjcTKLwXeI1-K7mGDG0_1_XO8Mw-Cii2SoUxz9c1h7wJVCoizs7l7j8tE7O2B0ZvGtSUE8gVKH19Y8kJ_u1zXCeGxbisxtbQaNzhwoo0_VuX53Pzo67oezGKxo-AJr_dM7F5ksHYBLF-JXTG_Qr3wpvLJ2rCQcCB9YTBUeVOZbv14"/>
+</div>
+<div>
+<p class="font-body-md-bold text-body-md-bold">수진</p>
+<p class="font-label-sm text-label-sm text-on-surface-variant">28,000원</p>
+</div>
+</div>
+<button class="w-10 h-10 flex items-center justify-center rounded-xl bg-surface-container-low text-on-surface-variant hover:bg-secondary-container hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+</div>
+<!-- Participant: 영희 (Exempted) -->
+<div class="bg-primary-fixed-dim/10 border-2 border-dashed border-primary-fixed-dim rounded-2xl p-md flex justify-between items-center relative overflow-hidden group">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-full overflow-hidden border-2 border-primary-fixed-dim bg-white flex items-center justify-center grayscale opacity-80">
+<img class="w-full h-full object-cover" data-alt="A modern 3D avatar of a young woman with long hair, rendered in a professional minimalist style. The lighting is soft and even, highlighting a serene expression. The color scheme is consistent with a high-end financial application's interface." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDlqdhEV18eobyRts4g5HG8WIkdw1gEboDlikrXV6sxk8Rd1tWGn842hkUeM-3wRyv34yWIEtwn77Mx3I2VF9T6wTp9sDUBpzdelW4dkCGnEIqiGfg5dlkEjnszEwiD0vqVCWqSVCW0GjSxtalwLTzxZnT_tdZMcd5_uyBOHqNMKOQth9gnZPXC2_p9KByxUXHxeRpnkGWVU-HyHh4TdcwIOX6ibheT7QGJVG1Wj99QaFn3p4-FB4MVM2ECfvotNDJ-CaHkxv3ai7Y"/>
+</div>
+<div>
+<div class="flex items-center gap-2">
+<p class="font-body-md-bold text-body-md-bold">영희</p>
+<span class="px-2 py-0.5 rounded-full bg-primary text-white text-[10px] font-bold uppercase">Exempt</span>
+</div>
+<p class="font-label-sm text-label-sm text-primary font-bold">면제 (0원)</p>
+</div>
+</div>
+<button class="w-10 h-10 flex items-center justify-center rounded-xl bg-primary/10 text-primary hover:bg-primary hover:text-white transition-colors">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+<!-- Background Decoration -->
+<span class="material-symbols-outlined absolute -right-4 -bottom-4 text-primary/10 text-7xl select-none">celebration</span>
+</div>
+</div>
+</section>
+<!-- Summary Insight -->
+<div class="mt-lg p-lg bg-white rounded-2xl border border-outline-variant/30 text-center">
+<p class="font-body-md-reg text-on-surface-variant leading-relaxed">
+                운 좋게 <span class="text-primary font-bold">영희</span>님이 면제자로 선정되었어요!<br/>
+                남은 인원이 각 28,000원씩 부담합니다.
+            </p>
+</div>
+</main>
+<!-- Fixed Bottom Actions -->
+<footer class="fixed bottom-0 left-0 right-0 bg-surface/90 backdrop-blur-xl px-container-padding pt-4 pb-8 border-t border-outline-variant/10 shadow-[0px_-8px_30px_rgba(0,0,0,0.04)] z-50 max-w-md mx-auto rounded-t-2xl">
+<div class="flex flex-col gap-3 safe-bottom">
+<!-- Secondary Actions -->
+<div class="flex gap-3">
+<button class="flex-1 h-14 rounded-2xl bg-secondary-container text-on-secondary-container font-body-md-bold flex items-center justify-center gap-2 hover:bg-secondary-fixed transition-colors active:scale-95">
+<span class="material-symbols-outlined">image</span>
+                    이미지로 저장
+                </button>
+<button class="flex-1 h-14 rounded-2xl bg-surface-container-high text-on-surface font-body-md-bold flex items-center justify-center gap-2 hover:bg-outline-variant transition-colors active:scale-95">
+<span class="material-symbols-outlined">refresh</span>
+                    새로운 정산
+                </button>
+</div>
+<!-- Primary Action -->
+<button class="w-full h-14 bg-primary text-on-primary rounded-2xl font-body-lg-bold flex items-center justify-center gap-2 shadow-lg shadow-primary/25 hover:brightness-110 active:scale-[0.98] transition-all">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">share</span>
+                결과 공유하기
+            </button>
+</div>
+</footer>
+<!-- Micro-interaction Script -->
+<script>
+        document.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const icon = this.querySelector('.material-symbols-outlined');
+                if(icon) {
+                    icon.classList.add('scale-125');
+                    setTimeout(() => icon.classList.remove('scale-125'), 200);
+                }
+            });
+        });
+
+        // Simple Fade-in Animation for Cards
+        document.querySelectorAll('.bg-surface, .bg-primary-fixed-dim').forEach((card, index) => {
+            card.style.opacity = '0';
+            card.style.transform = 'translateY(10px)';
+            card.style.transition = 'all 0.4s ease-out';
+            card.style.transitionDelay = `${index * 0.1}s`;
+            
+            setTimeout(() => {
+                card.style.opacity = '1';
+                card.style.transform = 'translateY(0)';
+            }, 100);
+        });
+    </script>
+</body></html>
