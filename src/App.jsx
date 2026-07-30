@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { getTossShareLink, saveBase64Data, setClipboardText, share } from '@apps-in-toss/web-framework'
-import { BottomCTA, BottomSheet, Button, IconButton, ListHeader, ListRow, SegmentedControl, Tab, TextField, Top, useWebToast } from '@toss/tds-mobile'
+import { BottomCTA, BottomSheet, Button, IconButton, ListHeader, ListRow, SegmentedControl, Switch, Tab, TextField, Top, useWebToast } from '@toss/tds-mobile'
 import settlementCompleteImage from './assets/settlement-complete.jpg'
 
 const tabs = {
@@ -48,26 +48,155 @@ const historyItems = [
 const settlementModes = [
   { id: 'equal', icon: 'groups', title: '똑같이 나누기', description: '모두 같은 금액을 내요.' },
   { id: 'exempt', icon: 'person_off', title: '한 명 면제', description: '한 명을 뽑고 나머지가 나눠 내요.' },
-  { id: 'extra', icon: 'add_card', title: '한 명 더 내기', description: '한 명이 정해진 금액을 조금 더 내요.' },
-  { id: 'ratio', icon: 'pie_chart', title: '차등 정산', description: '각자 다른 비율로 나눠 내요.' },
+  { id: 'extra', icon: 'add_card', title: '한 명 더 내기', description: '선택된 한 명이 2인분을 내요.' },
+  { id: 'discount', icon: 'workspace_premium', title: '1등 덜 내기', description: '1등은 기본 1/N의 50%만 내요.' },
 ]
+
+const discountWinnerRate = 0.5
 
 const gameCatalog = [
   { id: 'roulette', category: 'random', icon: 'published_with_changes', title: '룰렛 돌리기', badge: '기본', description: '선택한 정산 방식에 맞춰 무작위 대상자를 뽑아요.', rule: '룰렛을 돌리면 선택한 정산 방식에 따라 결과가 적용돼요.' },
   { id: 'fastRandom', category: 'random', icon: 'bolt', title: '빠른 랜덤 뽑기', badge: '빠른 결정', description: '버튼 한 번으로 빠르게 대상자를 정해요.', rule: '참여자 중 한 명을 즉시 뽑아 정산 방식에 적용해요.' },
   { id: 'receiptEnvelope', category: 'random', icon: 'drafts', title: '영수증 봉투 뽑기', badge: '추천 게임', description: '봉투를 골라 숨겨진 정산 결과를 확인해요.', rule: '봉투 안에 들어있는 이름을 뽑아 정산 방식에 적용해요.' },
-  { id: 'reaction', category: 'ranking', icon: 'flash_on', title: '반응속도 대결', badge: '순위 게임', description: '신호가 뜨면 가장 빠르게 눌러요.', rule: '신호 후 클릭까지 걸린 시간이 짧을수록 높은 순위예요.' },
+  { id: 'reaction', category: 'ranking', icon: 'flash_on', title: '반응속도 대결', badge: '순위 게임', description: '신호가 뜨면 가장 빠르게 눌러요.', rule: '신호 후 클릭까지 걸린 시간이 짧을수록 높은 순위예요.', requiresCountdownReady: true },
   { id: 'fiveSeconds', category: 'ranking', icon: 'timer', title: '딱 5초 챌린지', badge: '순위 게임', description: '5초에 가장 가깝게 멈춰요.', rule: '5.000초와의 차이가 작을수록 높은 순위예요.' },
-  { id: 'timingStop', category: 'ranking', icon: 'speed', title: '타이밍 멈추기', badge: '순위 게임', description: '움직이는 게이지를 목표 구간에 멈춰요.', rule: '목표 중앙에 가까울수록 높은 순위예요.' },
+  { id: 'timingStop', category: 'ranking', icon: 'speed', title: '타이밍 멈추기', badge: '순위 게임', description: '움직이는 게이지를 목표 구간에 멈춰요.', rule: '목표 중앙에 가까울수록 높은 순위예요.', requiresCountdownReady: true },
   { id: 'numberOrder', category: 'ranking', icon: 'pin', title: '숫자 순서대로 누르기', badge: '순위 게임', description: '숨어 있는 숫자를 순서대로 눌러요.', rule: '완료 시간이 짧고 실수가 적을수록 높은 순위예요.' },
   { id: 'movingTarget', category: 'ranking', icon: 'my_location', title: '움직이는 표적 맞히기', badge: '순위 게임', description: '움직이는 표적을 제한 시간 안에 맞혀요.', rule: '맞힌 표적 수가 많을수록 높은 순위예요.' },
-  { id: 'memoryCard', category: 'ranking', icon: 'style', title: '기억력 카드 게임', badge: '순위 게임', description: '같은 그림의 카드를 빠르게 찾아요.', rule: '완료 시간이 짧고 시도 수가 적을수록 높은 순위예요.' },
+  { id: 'memoryCard', category: 'ranking', icon: 'style', title: '기억력 카드 게임', badge: '순위 게임', description: '같은 그림의 카드를 빠르게 찾아요.', rule: '완료 시간이 짧고 시도 수가 적을수록 높은 순위예요.', requiresCountdownReady: true },
 ]
 
 const amountKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', 'backspace']
 
 function formatWon(value) {
   return `${Number(value || 0).toLocaleString('ko-KR')}원`
+}
+
+function allocateAmountByWeights(amount, participants, getWeight) {
+  const weights = participants.map((participant) => Math.max(0, getWeight(participant)))
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0)
+
+  if (participants.length === 0 || totalWeight <= 0) {
+    return participants.map((participant) => ({ participant, amount: 0 }))
+  }
+
+  const rawAmounts = weights.map((weight) => Math.floor((amount * weight) / totalWeight))
+  const remainder = amount - rawAmounts.reduce((sum, value) => sum + value, 0)
+  const lastIndex = rawAmounts.length - 1
+  rawAmounts[lastIndex] += remainder
+
+  return participants.map((participant, index) => ({
+    participant,
+    amount: rawAmounts[index],
+  }))
+}
+
+function allocateEvenly(amount, participants) {
+  return allocateAmountByWeights(amount, participants, () => 1)
+}
+
+function buildSettlementPreview({ amount, participants, settlementMode, selectedParticipant }) {
+  const result = calculateSettlementResult({ amount, participants, settlementMode, selectedParticipant })
+  const selectedLine = result.lineItems.find((item) => item.highlighted)
+  const otherLine = result.lineItems.find((item) => !item.highlighted)
+
+  if (settlementMode === 'extra') {
+    return {
+      rule: '1등/선택자는 2인분, 나머지는 1인분을 부담해요',
+      amounts: `예상 선택자 ${formatWon(selectedLine?.amount)} · 나머지 각 ${formatWon(otherLine?.amount)}`,
+    }
+  }
+
+  if (settlementMode === 'discount') {
+    return {
+      rule: '1등/선택자는 기본 1/N의 50%, 나머지가 잔액을 균등 부담해요',
+      amounts: `예상 선택자 ${formatWon(selectedLine?.amount)} · 나머지 각 ${formatWon(otherLine?.amount)}`,
+    }
+  }
+
+  if (settlementMode === 'exempt') {
+    return {
+      rule: '선택된 한 명은 0원, 나머지가 금액을 균등 부담해요',
+      amounts: `면제 1명 0원 · 나머지 각 ${formatWon(otherLine?.amount)}`,
+    }
+  }
+
+  return {
+    rule: '참여자 모두가 같은 금액을 부담해요',
+    amounts: `각자 ${formatWon(result.lineItems[0]?.amount)}`,
+  }
+}
+
+function calculateSettlementResult({ amount, participants, settlementMode, selectedParticipant }) {
+  const mode = settlementModes.find((item) => item.id === settlementMode) || settlementModes[1]
+  const target = participants.includes(selectedParticipant) ? selectedParticipant : participants[0]
+  let allocations
+  let summaryText
+
+  if (settlementMode === 'equal') {
+    allocations = allocateEvenly(amount, participants)
+    summaryText = `참여자 ${participants.length}명이 각 ${formatWon(allocations[0]?.amount)}을 부담합니다.`
+  } else if (settlementMode === 'extra') {
+    allocations = allocateAmountByWeights(amount, participants, (participant) => (participant === target ? 2 : 1))
+    const selectedAmount = allocations.find((item) => item.participant === target)?.amount
+    summaryText = `${target} 님이 2인분인 ${formatWon(selectedAmount)}을 부담합니다.`
+  } else if (settlementMode === 'discount') {
+    const equalBase = Math.floor(amount / Math.max(1, participants.length))
+    const selectedAmount = Math.floor(equalBase * discountWinnerRate)
+    const otherParticipants = participants.filter((participant) => participant !== target)
+    const otherAllocations = allocateEvenly(Math.max(0, amount - selectedAmount), otherParticipants)
+    allocations = participants.map((participant) => (
+      participant === target
+        ? { participant, amount: selectedAmount }
+        : otherAllocations.find((item) => item.participant === participant) || { participant, amount: 0 }
+    ))
+    summaryText = `${target} 님은 기본 1/N의 50%만 부담하고, 나머지가 잔액을 나눕니다.`
+  } else {
+    const paidParticipants = participants.filter((participant) => participant !== target)
+    const paidAllocations = allocateEvenly(amount, paidParticipants)
+    allocations = participants.map((participant) => (
+      participant === target
+        ? { participant, amount: 0 }
+        : paidAllocations.find((item) => item.participant === participant) || { participant, amount: 0 }
+    ))
+    summaryText = `${target} 님이 면제되고, 나머지가 금액을 나눕니다.`
+  }
+
+  const lineItems = allocations.map((item) => {
+    const highlighted = settlementMode !== 'equal' && item.participant === target
+    let description = formatWon(item.amount)
+
+    if (settlementMode === 'equal') {
+      description = '1/N 부담'
+    } else if (settlementMode === 'exempt' && highlighted) {
+      description = '면제 (0원)'
+    } else if (settlementMode === 'extra' && highlighted) {
+      description = '2인분 부담'
+    } else if (settlementMode === 'extra') {
+      description = '1인분 부담'
+    } else if (settlementMode === 'discount' && highlighted) {
+      description = '50% 할인'
+    } else if (settlementMode === 'discount') {
+      description = '잔액 균등 부담'
+    }
+
+    return {
+      ...item,
+      amountText: formatWon(item.amount),
+      description,
+      highlighted,
+    }
+  })
+
+  return {
+    amount,
+    lineItems,
+    mode,
+    modeLabel: mode.title,
+    selectedParticipant: target,
+    shareText: lineItems.map((item) => `${item.participant}: ${item.amountText}`).join(' / '),
+    summaryText,
+  }
 }
 
 function base64Encode(text) {
@@ -93,28 +222,25 @@ export function sanitizeFileName(title) {
   return cleanedTitle ? `${cleanedTitle}.png` : 'nuganellae-settlement-result.png'
 }
 
-function buildSharePayload({ amount, participants, settlementTitle, splitAmount, winner }) {
+function buildSharePayload({ amount, participants, settlementResult, settlementTitle }) {
   const title = settlementTitle.trim()
-  const paidParticipants = participants.filter((participant) => participant !== winner)
-  const memberLines = participants.map((participant) => (
-    `${participant}: ${participant === winner ? '면제 (0원)' : formatWon(splitAmount)}`
-  ))
+  const result = settlementResult || calculateSettlementResult({ amount, participants, settlementMode: 'exempt', selectedParticipant: participants[0] })
+  const memberLines = result.lineItems.map((item) => `${item.participant}: ${item.amountText}`)
 
   return {
     amount,
     fileName: sanitizeFileName(title),
+    lineItems: result.lineItems,
     memberLines,
-    paidParticipants,
+    modeLabel: result.modeLabel,
     participants,
-    splitAmount,
+    selectedParticipant: result.selectedParticipant,
     title,
-    winner,
     message: [
       title,
-      `총 정산 금액: ${formatWon(amount)}`,
-      `면제자: ${winner}`,
-      `부담 인원: ${paidParticipants.length}명`,
-      `1인당 금액: ${formatWon(splitAmount)}`,
+      `珥??뺤궛 湲덉븸: ${formatWon(amount)}`,
+      `?뺤궛 諛⑹떇: ${result.modeLabel}`,
+      result.summaryText,
       memberLines.join(' / '),
     ].join('\n'),
   }
@@ -123,8 +249,8 @@ function buildSharePayload({ amount, participants, settlementTitle, splitAmount,
 function buildSettlementDeepLink(payload) {
   const params = new URLSearchParams({
     amount: String(payload.amount),
-    splitAmount: String(payload.splitAmount),
-    winner: payload.winner,
+    mode: payload.modeLabel,
+    selectedParticipant: payload.selectedParticipant,
     participants: payload.participants.join(','),
   })
 
@@ -132,11 +258,10 @@ function buildSettlementDeepLink(payload) {
 }
 
 function buildReceiptSvg(payload) {
-  const rows = payload.participants.map((participant, index) => {
-    const amountText = participant === payload.winner ? '면제' : formatWon(payload.splitAmount)
+  const rows = payload.lineItems.map((item, index) => {
     return `
-      <text x="48" y="${230 + index * 38}" fill="#4e5968" font-size="22" font-weight="700">${participant}</text>
-      <text x="452" y="${230 + index * 38}" fill="#191f28" font-size="22" font-weight="800" text-anchor="end">${amountText}</text>
+      <text x="48" y="${230 + index * 38}" fill="#4e5968" font-size="22" font-weight="700">${escapeSvgText(item.participant)}</text>
+      <text x="452" y="${230 + index * 38}" fill="#191f28" font-size="22" font-weight="800" text-anchor="end">${item.amountText}</text>
     `
   }).join('')
 
@@ -145,13 +270,13 @@ function buildReceiptSvg(payload) {
       <rect width="500" height="560" rx="36" fill="#f9fafb"/>
       <rect x="28" y="28" width="444" height="504" rx="28" fill="#ffffff"/>
       <circle cx="250" cy="96" r="34" fill="#e8f3ff"/>
-      <text x="250" y="105" fill="#3182f6" font-size="34" font-weight="900" text-anchor="middle">₩</text>
+      <text x="250" y="105" fill="#3182f6" font-size="34" font-weight="900" text-anchor="middle">??/text>
       <text x="250" y="158" fill="#191f28" font-size="30" font-weight="900" text-anchor="middle">${escapeSvgText(payload.title)}</text>
-      <text x="250" y="190" fill="#6b7684" font-size="18" font-weight="600" text-anchor="middle">총 ${formatWon(payload.amount)} · ${payload.winner} 님 면제</text>
+      <text x="250" y="190" fill="#6b7684" font-size="18" font-weight="600" text-anchor="middle">珥?${formatWon(payload.amount)} 쨌 ${escapeSvgText(payload.modeLabel)}</text>
       ${rows}
       <rect x="48" y="430" width="404" height="70" rx="18" fill="#f2f4f6"/>
-      <text x="72" y="474" fill="#4e5968" font-size="20" font-weight="700">나머지 ${payload.paidParticipants.length}명이 각</text>
-      <text x="428" y="474" fill="#3182f6" font-size="24" font-weight="900" text-anchor="end">${formatWon(payload.splitAmount)}</text>
+      <text x="72" y="474" fill="#4e5968" font-size="20" font-weight="700">${escapeSvgText(payload.modeLabel)} ?곸슜</text>
+      <text x="428" y="474" fill="#3182f6" font-size="24" font-weight="900" text-anchor="end">${formatWon(payload.amount)}</text>
     </svg>
   `
 }
@@ -336,14 +461,15 @@ function App() {
   const [participants, setParticipants] = useState(baseParticipants)
   const [newParticipant, setNewParticipant] = useState('')
   const [settlementMode, setSettlementMode] = useState('exempt')
-  const [winner, setWinner] = useState('영희')
+  const [winner, setWinner] = useState('?곹씗')
   const [shareOpen, setShareOpen] = useState(false)
-  const [filter, setFilter] = useState('전체')
+  const [filter, setFilter] = useState('?꾩껜')
   const [stepHistory, setStepHistory] = useState([])
   const [rouletteSpinning, setRouletteSpinning] = useState(false)
   const [selectedGameId, setSelectedGameId] = useState('roulette')
   const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0)
   const [gameScores, setGameScores] = useState([])
+  const [allowReselect, setAllowReselect] = useState(true)
 
   const paidParticipants = useMemo(
     () => participants.filter((participant) => participant !== winner),
@@ -351,10 +477,23 @@ function App() {
   )
   const effectiveAmount = amount || 84000
   const splitAmount = Math.ceil(effectiveAmount / Math.max(1, paidParticipants.length))
+  const settlementResult = useMemo(
+    () => calculateSettlementResult({
+      amount: effectiveAmount,
+      participants,
+      selectedParticipant: winner,
+      settlementMode,
+    }),
+    [effectiveAmount, participants, settlementMode, winner],
+  )
   const canProceedFromTitle = settlementTitle.trim().length > 0
   const selectedGame = gameCatalog.find((game) => game.id === selectedGameId) || gameCatalog[0]
   const rankedScores = useMemo(() => getRankedScores(gameScores, selectedGame), [gameScores, selectedGame])
   const firstPlaceScores = rankedScores.filter((score) => score.rank === 1)
+  const isFinalStep = step === steps.finalResult || step === steps.gameFinalResult
+  const isResultStep = step === steps.rouletteResult || step === steps.rankingResult || step === steps.tieRematch
+  const isGameInProgressStep = step === steps.participantTurn || step === steps.gamePlay || step === steps.roulette
+  const showHomeTopBar = activeTab === tabs.home && step !== steps.detail && !isFinalStep && !(isResultStep && !allowReselect)
 
   useEffect(() => {
     if (!rouletteSpinning) {
@@ -362,7 +501,7 @@ function App() {
     }
 
     const timerId = window.setTimeout(() => {
-      const nextWinner = participants.includes('영희') ? '영희' : participants[participants.length - 1]
+      const nextWinner = participants.includes('?곹씗') ? '?곹씗' : participants[participants.length - 1]
       setWinner(nextWinner)
       setRouletteSpinning(false)
       navigateHomeStep(steps.rouletteResult)
@@ -396,12 +535,6 @@ function App() {
     navigateHomeStep(nextStep, { resetHistory: true })
   }
 
-  function restartSettlement() {
-    setSettlementTitle('')
-    setAmount(0)
-    goHome(steps.title)
-  }
-
   function addAmount(value) {
     setAmount((current) => current + value)
   }
@@ -419,6 +552,18 @@ function App() {
   }
 
   function goPreviousHomeStep() {
+    if (isGameInProgressStep) {
+      const shouldLeave = window.confirm('게임을 나가면 현재 기록이 초기화돼요. 나갈까요?')
+
+      if (!shouldLeave) {
+        return
+      }
+
+      resetGameProgress()
+      navigateHomeStep(steps.gameSelect, { resetHistory: true })
+      return
+    }
+
     const previousStep = stepHistory[stepHistory.length - 1] || steps.start
 
     setActiveTab(tabs.home)
@@ -455,6 +600,11 @@ function App() {
 
   function chooseMethod(mode) {
     setSettlementMode(mode)
+    if (mode === 'equal') {
+      navigateHomeStep(steps.finalResult, { resetHistory: true })
+      return
+    }
+
     if (mode === 'exempt') {
       navigateHomeStep(steps.exempt)
       return
@@ -470,6 +620,25 @@ function App() {
   function resetGameProgress() {
     setCurrentPlayerIndex(0)
     setGameScores([])
+  }
+
+  function resetSettlementDraft() {
+    setSettlementTitle('')
+    setAmount(0)
+    setNewParticipant('')
+    setParticipants([...baseParticipants])
+    setSettlementMode('exempt')
+    setWinner(baseParticipants[baseParticipants.length - 1])
+    setAllowReselect(true)
+    setSelectedGameId('roulette')
+    setRouletteSpinning(false)
+    setShareOpen(false)
+    resetGameProgress()
+  }
+
+  function restartSettlement() {
+    resetSettlementDraft()
+    navigateHomeStep(steps.title, { resetHistory: true })
   }
 
   function startSelectedGame() {
@@ -525,13 +694,13 @@ function App() {
 
   function confirmGameWinner(participant) {
     setWinner(participant)
-    navigateHomeStep(steps.gameFinalResult)
+    navigateHomeStep(steps.gameFinalResult, { resetHistory: true })
   }
 
   return (
     <main className="app">
       <section className="phone-shell" aria-label="누가낼래 앱">
-        {activeTab === tabs.home && step !== steps.detail && (
+        {showHomeTopBar && (
           <TopBar
             title="누가낼래"
             progress={step === steps.start ? '1/4' : step === steps.title ? '1/4' : step === steps.amount ? '2/4' : step === steps.participants ? '3/4' : '4/4'}
@@ -574,11 +743,20 @@ function App() {
           <MethodScreen selected={settlementMode} onSelect={setSettlementMode} onNext={() => chooseMethod(settlementMode)} />
         )}
         {activeTab === tabs.home && step === steps.exempt && (
-          <ExemptScreen amount={effectiveAmount} people={participants.length} splitAmount={splitAmount} onNext={() => navigateHomeStep(steps.gameSelect)} />
+          <ExemptScreen
+            allowReselect={allowReselect}
+            amount={effectiveAmount}
+            people={participants.length}
+            splitAmount={splitAmount}
+            onAllowReselectChange={setAllowReselect}
+            onNext={() => navigateHomeStep(steps.gameSelect)}
+          />
         )}
         {activeTab === tabs.home && step === steps.gameSelect && (
           <GameSelectScreen
+            amount={effectiveAmount}
             games={gameCatalog}
+            participants={participants}
             selectedGameId={selectedGameId}
             settlementMode={settlementMode}
             onSelect={setSelectedGameId}
@@ -586,7 +764,7 @@ function App() {
           />
         )}
         {activeTab === tabs.home && step === steps.gameRules && (
-          <GameRulesScreen game={selectedGame} onNext={() => navigateHomeStep(steps.playOrder)} />
+          <GameRulesScreen amount={effectiveAmount} game={selectedGame} participants={participants} settlementMode={settlementMode} winner={winner} onNext={() => navigateHomeStep(steps.playOrder)} />
         )}
         {activeTab === tabs.home && step === steps.playOrder && (
           <PlayOrderScreen participants={participants} onNext={() => navigateHomeStep(steps.participantTurn)} />
@@ -597,29 +775,28 @@ function App() {
         {activeTab === tabs.home && step === steps.gamePlay && (
           selectedGame.category === 'random'
             ? <RandomGameScreen game={selectedGame} participants={participants} onComplete={completeRandomGame} />
-            : <RankingGameScreen game={selectedGame} participant={participants[currentPlayerIndex]} playerIndex={currentPlayerIndex} onComplete={completeGameTurn} />
+            : <RankingGameScreen game={selectedGame} participant={participants[currentPlayerIndex]} playerIndex={currentPlayerIndex} previousScores={gameScores} onComplete={completeGameTurn} />
         )}
         {activeTab === tabs.home && step === steps.rankingResult && (
-          <RankingResultScreen game={selectedGame} scores={rankedScores} onNext={() => confirmGameWinner(firstPlaceScores[0]?.participant || winner)} />
+          <RankingResultScreen game={selectedGame} scores={rankedScores} settlementMode={settlementMode} onNext={() => confirmGameWinner(firstPlaceScores[0]?.participant || winner)} />
         )}
         {activeTab === tabs.home && step === steps.tieRematch && (
-          <TieRematchScreen tiedScores={firstPlaceScores} onConfirm={confirmGameWinner} />
+          <TieRematchScreen settlementMode={settlementMode} tiedScores={firstPlaceScores} onConfirm={confirmGameWinner} />
         )}
         {activeTab === tabs.home && step === steps.roulette && (
           <RouletteScreen amount={effectiveAmount} participants={participants} settlementMode={settlementMode} spinning={rouletteSpinning} onSpin={spinRoulette} />
         )}
         {activeTab === tabs.home && step === steps.rouletteResult && (
           selectedGame.id === 'roulette'
-            ? <RouletteResultScreen amount={effectiveAmount} settlementMode={settlementMode} splitAmount={splitAmount} winner={winner} onRetry={() => navigateHomeStep(steps.roulette)} onNext={() => navigateHomeStep(steps.finalResult)} />
-            : <RandomResultScreen amount={effectiveAmount} game={selectedGame} settlementMode={settlementMode} splitAmount={splitAmount} winner={winner} onRetry={() => navigateHomeStep(steps.gamePlay)} onNext={() => navigateHomeStep(steps.finalResult)} />
+            ? <RouletteResultScreen amount={effectiveAmount} canRetry={allowReselect} settlementMode={settlementMode} settlementResult={settlementResult} winner={winner} onRetry={() => navigateHomeStep(steps.roulette)} onNext={() => navigateHomeStep(steps.finalResult, { resetHistory: true })} />
+            : <RandomResultScreen amount={effectiveAmount} canRetry={allowReselect} game={selectedGame} settlementMode={settlementMode} settlementResult={settlementResult} winner={winner} onRetry={() => navigateHomeStep(steps.gamePlay)} onNext={() => navigateHomeStep(steps.finalResult, { resetHistory: true })} />
         )}
         {activeTab === tabs.home && step === steps.finalResult && (
           <FinalResultScreen
             amount={effectiveAmount}
             participants={participants}
+            settlementResult={settlementResult}
             settlementTitle={settlementTitle.trim()}
-            splitAmount={splitAmount}
-            winner={winner}
             onRestart={restartSettlement}
             onShare={() => setShareOpen(true)}
           />
@@ -630,15 +807,14 @@ function App() {
             game={selectedGame}
             isGameResult
             participants={participants}
+            settlementResult={settlementResult}
             settlementTitle={settlementTitle.trim()}
-            splitAmount={splitAmount}
-            winner={winner}
             onRestart={restartSettlement}
             onShare={() => setShareOpen(true)}
           />
         )}
         {activeTab === tabs.home && step === steps.detail && (
-          <DetailScreen amount={84000} splitAmount={28000} winner="영희" onBack={() => setActiveTab(tabs.history)} onShare={() => setShareOpen(true)} />
+          <DetailScreen amount={84000} splitAmount={28000} winner="?곹씗" onBack={() => setActiveTab(tabs.history)} onShare={() => setShareOpen(true)} />
         )}
 
         <BottomNav activeTab={activeTab} onNavigate={(tab) => {
@@ -652,9 +828,8 @@ function App() {
           amount={effectiveAmount}
           open={shareOpen}
           participants={participants}
-          settlementTitle={settlementTitle.trim() || '삼겹살 회식 정산'}
-          splitAmount={splitAmount}
-          winner={winner}
+          settlementResult={settlementResult}
+          settlementTitle={settlementTitle.trim() || '?쇨껸???뚯떇 ?뺤궛'}
           onClose={() => setShareOpen(false)}
         />
       </section>
@@ -685,27 +860,29 @@ function StartScreen({ onStart }) {
         centered
         id="start-title"
         title={<>오늘 정산,<br /><span>재미있게 결정해요</span></>}
-        subtitle="금액과 참여자를 입력하면 각자 낼 금액을 계산해 드려요."
+        subtitle="금액과 참여자를 입력하면 각자 낼 금액을 계산해 드려요"
       />
-      <div className="hero-illustration" aria-hidden="true">
-        <div className="receipt-card">
+      <div className="hero-illustration settlement-visual" aria-hidden="true">
+        <div className="settlement-visual-card primary-card">
           <span className="icon-bubble"><Icon>payments</Icon></span>
           <i />
           <i />
-          <strong>₩ 15,000</strong>
+          <strong>₩15,000</strong>
         </div>
-        <div className="receipt-shadow" />
+        <div className="settlement-visual-card back-card" />
+        <span className="settlement-coin coin-one"><Icon>paid</Icon></span>
+        <span className="settlement-coin coin-two"><Icon>person</Icon></span>
       </div>
-      <ListRow
-        as="button"
-        className="surface-row recent-row"
-        left={<span className="icon-bubble muted"><Icon>history</Icon></span>}
-        contents={<TextStack description="강남역 삼겹살 모임" meta="최근 정산 (7월 14일)" title="84,000원" />}
-        right={<Icon>chevron_right</Icon>}
-        type="button"
-        withTouchEffect
-      />
-      <ScreenCTA icon="arrow_forward" onClick={onStart}>정산 시작하기</ScreenCTA>
+      <button className="recent-settlement-card" type="button">
+        <span className="icon-bubble muted"><Icon>history</Icon></span>
+        <span className="recent-settlement-copy">
+          <small>최근 정산 (7월 14일)</small>
+          <strong>84,000원</strong>
+          <small>강남역 삼겹살 모임</small>
+        </span>
+        <Icon>chevron_right</Icon>
+      </button>
+      <ScreenCTA icon="arrow_forward" testId="start-settlement" onClick={onStart}>정산 시작하기</ScreenCTA>
     </section>
   )
 }
@@ -715,7 +892,7 @@ function TitleScreen({ title, onChangeTitle, onNext }) {
 
   return (
     <section className="screen title-screen" aria-labelledby="title-entry-title">
-      <TdsTitle id="title-entry-title" subtitle="결과 화면과 공유 이미지에 표시될 이름이에요." title="어떤 정산인가요?" />
+      <TdsTitle id="title-entry-title" subtitle="결과 화면과 공유 이미지에 표시할 이름이에요." title="어떤 정산인가요?" />
       <form
         className="title-form"
         onSubmit={(event) => {
@@ -727,6 +904,7 @@ function TitleScreen({ title, onChangeTitle, onNext }) {
       >
         <TextField
           aria-label="정산 타이틀"
+          data-testid="settlement-title-input"
           label="정산 타이틀"
           labelOption="sustain"
           placeholder="예: 강남역 삼겹살 모임"
@@ -735,8 +913,8 @@ function TitleScreen({ title, onChangeTitle, onNext }) {
           onChange={(event) => onChangeTitle(event.target.value)}
         />
       </form>
-      <div className="tip-card"><Icon>edit_note</Icon> 입력한 타이틀은 결과 화면과 공유 이미지 파일명으로 사용됩니다.</div>
-      <ScreenCTA disabled={!trimmedTitle} icon="arrow_forward" onClick={onNext}>금액 입력하기</ScreenCTA>
+      <div className="tip-card"><Icon>edit_note</Icon> 입력한 타이틀은 결과 화면과 공유 이미지 파일명으로 사용합니다.</div>
+      <ScreenCTA disabled={!trimmedTitle} icon="arrow_forward" testId="title-next" onClick={onNext}>금액 입력하기</ScreenCTA>
     </section>
   )
 }
@@ -755,7 +933,7 @@ function AmountScreen({ amount, onAddAmount, onInputKey, onReset, onNext }) {
         <Button color="primary" size="small" type="button" variant="weak" onClick={() => onAddAmount(100000)}>+10만 원</Button>
         <Button color="dark" size="small" type="button" variant="weak" onClick={onReset}>초기화</Button>
       </div>
-      <div className="keypad" aria-label="금액 숫자 입력">
+      <div className="keypad" aria-label="湲덉븸 ?レ옄 ?낅젰">
         {amountKeys.map((key) => (
           <button
             aria-label={key === 'backspace' ? '지우기' : key}
@@ -768,7 +946,7 @@ function AmountScreen({ amount, onAddAmount, onInputKey, onReset, onNext }) {
           </button>
         ))}
       </div>
-      <ScreenCTA disabled={amount <= 0} onClick={onNext}>참여자 입력하기</ScreenCTA>
+      <ScreenCTA disabled={amount <= 0} testId="amount-next" onClick={onNext}>참여자 입력하기</ScreenCTA>
     </section>
   )
 }
@@ -776,7 +954,7 @@ function AmountScreen({ amount, onAddAmount, onInputKey, onReset, onNext }) {
 function ParticipantsScreen({ participants, newParticipant, onChangeName, onSubmit, onRemove, onNext }) {
   return (
     <section className="screen participants-screen" aria-labelledby="participants-title">
-      <TdsTitle id="participants-title" subtitle="정산에 참여할 멤버들을 추가해주세요." title="누가 함께했나요?" />
+      <TdsTitle id="participants-title" subtitle="정산에 참여한 멤버들을 추가해 주세요." title="누가 함께했나요?" />
       <form className="participant-form" onSubmit={onSubmit}>
         <TextField
           label="참여자 이름"
@@ -808,7 +986,7 @@ function ParticipantsScreen({ participants, newParticipant, onChangeName, onSubm
           />
         ))}
       </ul>
-      <div className="tip-card"><Icon>lightbulb</Icon> 자주 함께하는 친구들을 '즐겨찾기'에서 불러올 수 있습니다.</div>
+      <div className="tip-card"><Icon>lightbulb</Icon> 자주 함께하는 친구들을 즐겨찾기에서 불러올 수 있습니다.</div>
       <ScreenCTA icon="chevron_right" testId="participants-next" onClick={onNext}>정산 방식 고르기</ScreenCTA>
     </section>
   )
@@ -817,7 +995,7 @@ function ParticipantsScreen({ participants, newParticipant, onChangeName, onSubm
 function MethodScreen({ selected, onSelect, onNext }) {
   return (
     <section className="screen method-screen" aria-labelledby="method-title">
-      <TdsTitle id="method-title" subtitle="원하시는 정산 방식을 선택해 주세요." title="어떻게 나눌까요?" />
+      <TdsTitle id="method-title" subtitle="원하는 정산 방식을 선택해 주세요." title="어떻게 나눌까요?" />
       <SegmentedControl alignment="fluid" value={selected} onChange={onSelect}>
         {settlementModes.map((mode) => (
           <SegmentedControl.Item key={mode.id} value={mode.id}>{mode.title}</SegmentedControl.Item>
@@ -840,12 +1018,12 @@ function MethodScreen({ selected, onSelect, onNext }) {
         ))}
       </ul>
       <div className="info-card"><Icon>info</Icon> 선택한 방식에 따라 정산 결과가 자동으로 계산되어 전송됩니다.</div>
-      <ScreenCTA icon="arrow_forward" testId="method-next" onClick={onNext}>{selected === 'exempt' ? '게임 선택하기' : '결과 확인하기'}</ScreenCTA>
+      <ScreenCTA icon="arrow_forward" testId="method-next" onClick={onNext}>{selected === 'equal' ? '결과 확인하기' : '게임 선택하기'}</ScreenCTA>
     </section>
   )
 }
 
-function ExemptScreen({ amount, people, splitAmount, onNext }) {
+function ExemptScreen({ allowReselect, amount, people, splitAmount, onAllowReselectChange, onNext }) {
   return (
     <section className="screen exempt-screen" aria-labelledby="exempt-title">
       <TdsTitle id="exempt-title" subtitle="한 명을 무작위로 선택하고, 나머지 인원이 금액을 나눠 냅니다." title="면제 정산을 설정해 주세요" />
@@ -863,19 +1041,18 @@ function ExemptScreen({ amount, people, splitAmount, onNext }) {
           <small>면제 방식</small>
           <strong><Icon>casino</Icon> 랜덤 1명</strong>
         </div>
-        <div className="mini-people">
-          <span>person</span><span>person</span><span>person</span><Icon>check_circle</Icon>
-        </div>
       </div>
-      <label className="toggle-row">
-        <input type="checkbox" defaultChecked />
-        <span><Icon>auto_awesome</Icon> 결과 재선택 허용</span>
-        <small>결과가 마음에 안 들면 다시 돌릴 수 있어요.</small>
-      </label>
+      <div className="toggle-row switch-row">
+        <span className="toggle-copy">
+          <span><Icon>auto_awesome</Icon> 결과 재선택 허용</span>
+          <small>결과가 마음에 들지 않으면 다시 돌릴 수 있어요.</small>
+        </span>
+        <Switch aria-label="결과 재선택 허용" checked={allowReselect} onChange={(_, checked) => onAllowReselectChange(checked)} />
+      </div>
       <div className="preview-card">
         <strong><Icon>analytics</Icon> 예상 결과 미리보기</strong>
         <p>면제 1명 0원</p>
-        <p>나머지 {people - 1}명 (각) 약 {formatWon(splitAmount)}</p>
+        <p>나머지 {people - 1}명 각 {formatWon(splitAmount)}</p>
       </div>
       <ScreenCTA icon="play_arrow" testId="exempt-next" onClick={onNext}>게임 선택하기</ScreenCTA>
     </section>
@@ -886,7 +1063,42 @@ function getSettlementModeLabel(mode) {
   return settlementModes.find((item) => item.id === mode)?.title || '한 명 면제'
 }
 
-function GameSelectScreen({ games, selectedGameId, settlementMode, onSelect, onNext }) {
+function getSettlementOutcomeLabel(mode) {
+  if (mode === 'extra') {
+    return '추가 부담자'
+  }
+
+  if (mode === 'discount') {
+    return '할인 대상'
+  }
+
+  return '면제자'
+}
+
+function getRankingWinnerText(mode, participant) {
+  if (mode === 'extra') {
+    return `${participant} 님 추가 부담자로 확정`
+  }
+
+  if (mode === 'discount') {
+    return `${participant} 님 50% 할인 적용`
+  }
+
+  return `${participant} 님 면제권 획득`
+}
+function SettlementRulePreview({ amount, participants, settlementMode, selectedParticipant }) {
+  const preview = buildSettlementPreview({ amount, participants, settlementMode, selectedParticipant })
+
+  return (
+    <div className="preview-card">
+      <strong><Icon>analytics</Icon> 정산 적용 미리보기</strong>
+      <p>{preview.rule}</p>
+      <p>{preview.amounts}</p>
+    </div>
+  )
+}
+
+function GameSelectScreen({ amount, games, participants, selectedGameId, settlementMode, onSelect, onNext }) {
   return (
     <section className="screen game-select-screen" aria-labelledby="game-select-title">
       <TdsTitle id="game-select-title" subtitle="정산 방식에 어울리는 게임을 선택해 보세요." title="게임 선택하기" />
@@ -895,6 +1107,7 @@ function GameSelectScreen({ games, selectedGameId, settlementMode, onSelect, onN
         <strong>{getSettlementModeLabel(settlementMode)}</strong>
         <Icon>sports_esports</Icon>
       </div>
+      <SettlementRulePreview amount={amount} participants={participants} selectedParticipant={participants[0]} settlementMode={settlementMode} />
       <ul className="game-card-list">
         {games.map((game) => (
           <li key={game.id}>
@@ -920,7 +1133,9 @@ function GameSelectScreen({ games, selectedGameId, settlementMode, onSelect, onN
   )
 }
 
-function GameRulesScreen({ game, onNext }) {
+function GameRulesScreen({ amount, game, participants, settlementMode, winner, onNext }) {
+  const outcomeLabel = getSettlementOutcomeLabel(settlementMode)
+
   return (
     <section className="screen game-rules-screen" aria-labelledby="game-rules-title">
       <TdsTitle id="game-rules-title" subtitle={game.description} title="게임 규칙 안내" />
@@ -930,10 +1145,11 @@ function GameRulesScreen({ game, onNext }) {
         <p>{game.rule}</p>
       </div>
       <div className="rule-grid">
-        <div><Icon>looks_one</Icon><strong>한 명씩 플레이</strong><small>참여자 순서대로 휴대폰을 넘겨요.</small></div>
-        <div><Icon>workspace_premium</Icon><strong>1등 면제권</strong><small>순위형 게임은 1등이 면제권자가 돼요.</small></div>
+        <div><Icon>looks_one</Icon><strong>한 명씩 플레이</strong><small>참여자 순서대로 이 게임을 진행해요.</small></div>
+        <div><Icon>workspace_premium</Icon><strong>1등 {outcomeLabel}</strong><small>순위형 게임은 1등에게 선택한 정산 방식을 적용해요.</small></div>
         <div><Icon>restart_alt</Icon><strong>동점 재대결</strong><small>1등이 동점이면 재대결 화면에서 확정해요.</small></div>
       </div>
+      <SettlementRulePreview amount={amount} participants={participants} selectedParticipant={winner} settlementMode={settlementMode} />
       <ScreenCTA icon="arrow_forward" testId="game-rules-next" onClick={onNext}>플레이 순서 확인</ScreenCTA>
     </section>
   )
@@ -963,8 +1179,8 @@ function ParticipantTurnScreen({ participant, progress, onNext }) {
       <TdsTitle centered id="turn-title" subtitle={`${progress} 플레이어`} title="참여자 전환" />
       <div className="turn-card">
         <span className="avatar giant">{participant.slice(0, 1)}</span>
-        <strong>{participant} 차례예요</strong>
-        <p>다른 사람의 기록이 보이지 않게 휴대폰을 넘긴 뒤 시작해 주세요.</p>
+        <strong>{participant} 李⑤??덉슂</strong>
+        <p>다른 사람의 기록이 보이지 않게 이 기기를 넘긴 뒤 시작해 주세요.</p>
       </div>
       <ScreenCTA icon="play_arrow" testId="participant-turn-start" onClick={onNext}>{participant} 시작하기</ScreenCTA>
     </section>
@@ -1050,40 +1266,130 @@ function ReceiptEnvelopeGameScreen({ game, participants, onComplete }) {
   )
 }
 
-function RankingGameScreen({ game, participant, playerIndex = 0, onComplete }) {
+function RankingGameScreen({ game, participant, playerIndex = 0, previousScores = [], onComplete }) {
   const [measuredScore, setMeasuredScore] = useState(null)
+  const needsCountdown = Boolean(game.requiresCountdownReady)
+  const [readyToPlay, setReadyToPlay] = useState(!needsCountdown)
+  const [countdown, setCountdown] = useState(3)
+
+  useEffect(() => {
+    setMeasuredScore(null)
+
+    if (!needsCountdown) {
+      setReadyToPlay(true)
+      return undefined
+    }
+
+    setReadyToPlay(false)
+    setCountdown(3)
+    return undefined
+  }, [game.id, needsCountdown, participant])
+
+  useEffect(() => {
+    if (!needsCountdown || readyToPlay) {
+      return undefined
+    }
+
+    const timerId = window.setTimeout(() => {
+      setCountdown((current) => {
+        if (current <= 1) {
+          setReadyToPlay(true)
+          return current
+        }
+
+        return current - 1
+      })
+    }, 1000)
+
+    return () => window.clearTimeout(timerId)
+  }, [countdown, needsCountdown, readyToPlay])
+
+  const isPreparing = needsCountdown && !readyToPlay
 
   return (
-    <section className={`screen ranking-game-screen ${game.id}-screen`} aria-labelledby="ranking-game-title">
+    <section className={`screen ranking-game-screen ${game.id}-screen${isPreparing ? ' preparing-countdown' : ''}`} aria-labelledby="ranking-game-title">
       <TdsTitle centered id="ranking-game-title" subtitle={`${participant} 님의 기록을 측정해요.`} title={game.title} />
-      {game.id === 'reaction' && <ReactionGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
-      {game.id === 'fiveSeconds' && <FiveSecondGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
-      {game.id === 'timingStop' && <TimingStopGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
-      {game.id === 'numberOrder' && <NumberOrderGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
-      {game.id === 'movingTarget' && <MovingTargetGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
-      {game.id === 'memoryCard' && <MemoryCardGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
-      <div className="info-card"><Icon>touch_app</Icon> 플레이가 끝나면 이번 차례 기록이 저장돼요.<small>{measuredScore ? measuredScore.displayScore : `기본 기록 ${playerIndex + 1}`}</small></div>
+      <div className={isPreparing ? 'ranking-game-content preparing' : 'ranking-game-content'}>
+        {isPreparing && <RankingGamePreview game={game} />}
+        {readyToPlay && game.id === 'reaction' && <ReactionGameScreen game={game} participant={participant} previousScores={previousScores} onScore={setMeasuredScore} />}
+        {readyToPlay && game.id === 'fiveSeconds' && <FiveSecondGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
+        {readyToPlay && game.id === 'timingStop' && <TimingStopGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
+        {readyToPlay && game.id === 'numberOrder' && <NumberOrderGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
+        {readyToPlay && game.id === 'movingTarget' && <MovingTargetGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
+        {readyToPlay && game.id === 'memoryCard' && <MemoryCardGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
+      </div>
       <ScreenCTA icon="check" testId="complete-game-turn" onClick={() => onComplete(measuredScore)}>이번 차례 완료</ScreenCTA>
+      {isPreparing && <GameCountdownOverlay count={countdown} game={game} />}
     </section>
   )
 }
 
-function ReactionGameScreen({ game, participant, onScore }) {
+function RankingGamePreview({ game }) {
+  const memoryTiles = ['A', 'B', 'C', 'A', 'C', 'B']
+
+  return (
+    <div className={`game-play-stage ${game.id}-stage countdown-preview`} aria-hidden="true">
+      {game.id === 'reaction' && <button className="reaction-pad waiting" type="button" disabled>Wait</button>}
+      {game.id === 'timingStop' && <div className="timing-track"><i /><b /></div>}
+      {game.id === 'memoryCard' && (
+        <div className="memory-board">
+          {memoryTiles.map((tile, index) => <button className="memory-card flipped" key={`${tile}-${index}`} type="button" disabled>{tile}</button>)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GameCountdownOverlay({ count, game }) {
+  const descriptions = {
+    reaction: '신호가 뜨면 바로 탭하세요...',
+    timingStop: '목표 지점에 맞춰 멈출 준비 중...',
+  }
+
+  return (
+    <div className="game-countdown-overlay" data-testid="game-countdown-overlay">
+      <strong>준비하세요!</strong>
+      <span data-testid="game-countdown-number">{count}</span>
+      <small>{descriptions[game.id] || '곧 게임이 시작돼요...'}</small>
+    </div>
+  )
+}
+function ReactionGameScreen({ game, participant, previousScores = [], onScore }) {
   const [state, setState] = useState('waiting')
-  const [result, setResult] = useState('')
+  const [result, setResult] = useState(null)
   const signalAtRef = useRef(0)
+  const signalTimerRef = useRef(null)
+  const stateCopy = {
+    waiting: { headline: '기다려주세요', subline: '신호가 뜨면 바로 탭하세요' },
+    signal: { headline: '지금 누르세요!', subline: 'GO! GO! GO!' },
+    early: { headline: '너무 빨랐어요!', subline: '다시 준비해 주세요' },
+    done: { headline: result ? `${(result.reactionMs / 1000).toFixed(3)}초` : '', subline: '기록 완료' },
+  }
+  const currentCopy = stateCopy[state] || stateCopy.waiting
+  const actionIcon = state === 'waiting' ? 'hourglass_empty' : 'touch_app'
+  const reactionStats = result ? getReactionResultStats(result.reactionMs, previousScores) : null
 
   function armSignal() {
+    if (signalTimerRef.current) {
+      window.clearTimeout(signalTimerRef.current)
+    }
+
     setState('waiting')
-    setResult('')
-    window.setTimeout(() => {
+    setResult(null)
+    const signalDelay = 3000 + Math.random() * 2000
+    signalTimerRef.current = window.setTimeout(() => {
       signalAtRef.current = Date.now()
       setState('signal')
-    }, 3000)
+    }, signalDelay)
   }
 
   useEffect(() => {
     armSignal()
+    return () => {
+      if (signalTimerRef.current) {
+        window.clearTimeout(signalTimerRef.current)
+      }
+    }
   }, [participant])
 
   function tap() {
@@ -1093,25 +1399,76 @@ function ReactionGameScreen({ game, participant, onScore }) {
 
     if (state !== 'signal') {
       setState('early')
-      setResult('Too early')
+      setResult(null)
       return
     }
 
     const reactionMs = Math.max(0, Date.now() - signalAtRef.current)
     setState('done')
-    setResult(`${reactionMs}ms`)
-    onScore(createMeasuredGameScore({ detail: { reactionMs }, displayScore: 'reaction recorded', gameId: game.id, metric: reactionMs, participant, rawScore: reactionMs }))
+    setResult({ reactionMs })
+    onScore(createMeasuredGameScore({ detail: { reactionMs }, displayScore: reactionMs, gameId: game.id, metric: reactionMs, participant, rawScore: reactionMs }))
   }
 
   return (
-    <div className="game-play-stage reaction-stage">
+    <div className={`game-play-stage reaction-stage ${state}`}>
+      <div className="reaction-turn-card">
+        <span className="avatar mini">{participant.slice(0, 1)}</span>
+        <span>
+          <small>현재 순서</small>
+          <strong>{participant}님의 차례</strong>
+        </span>
+        <i aria-hidden="true" />
+      </div>
       <button className={`reaction-pad ${state}`} data-testid="reaction-action" type="button" onClick={tap}>
-        {state === 'signal' ? 'TAP' : state === 'early' ? 'Too early' : state === 'done' ? 'Done' : 'Wait'}
+        <Icon>{actionIcon}</Icon>
       </button>
+      {state === 'done' && reactionStats ? (
+        <div className="reaction-result-panel">
+          <span className="reaction-result-icon"><Icon>bolt</Icon></span>
+          <strong>{(result.reactionMs / 1000).toFixed(3)}초</strong>
+          <p>아주 빠른 반응이에요!</p>
+          <div className="reaction-result-divider" />
+          <div className="reaction-result-stats">
+            <span>
+              <small>평균 대비</small>
+              <b>{reactionStats.averageDiffText}</b>
+            </span>
+            <span>
+              <small>현재 순위</small>
+              <b>{reactionStats.rank}위</b>
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className="reaction-copy">
+          <strong>{currentCopy.headline}</strong>
+          <span>{currentCopy.subline}</span>
+        </div>
+      )}
       <Button data-testid="reaction-reset" color="dark" size="small" type="button" variant="weak" onClick={armSignal}>다시 준비</Button>
-      {state === 'done' && <strong className="game-live-score">{result}</strong>}
     </div>
   )
+}
+
+function getReactionResultStats(reactionMs, previousScores) {
+  const previousReactionScores = previousScores.filter((score) => score.gameId === 'reaction' && typeof score.metric === 'number')
+  const allMetrics = [...previousReactionScores.map((score) => score.metric), reactionMs]
+  const averageMs = allMetrics.reduce((sum, metric) => sum + metric, 0) / Math.max(1, allMetrics.length)
+  const diffSeconds = (reactionMs - averageMs) / 1000
+  const rank = previousReactionScores.filter((score) => score.metric < reactionMs).length + 1
+
+  return {
+    averageDiffText: formatSignedSeconds(diffSeconds),
+    rank,
+  }
+}
+
+function formatSignedSeconds(value) {
+  if (Math.abs(value) < 0.005) {
+    return '0.00초'
+  }
+
+  return `${value < 0 ? '-' : '+'}${Math.abs(value).toFixed(2)}초`
 }
 
 function FiveSecondGameScreen({ game, participant, onScore }) {
@@ -1361,11 +1718,11 @@ function LegacyRankingGameScreen({ game, participant, onComplete }) {
     <section className={`screen ranking-game-screen ${game.id}-screen`} aria-labelledby="ranking-game-title">
       <TdsTitle centered id="ranking-game-title" subtitle={`${participant} 님의 기록을 측정해요.`} title={game.title} />
       <div className="game-play-stage">
-        {game.id === 'reaction' && <button className="reaction-pad" type="button">초록색이 되면 탭!</button>}
+        {game.id === 'reaction' && <button className="reaction-pad" type="button">珥덈줉?됱씠 ?섎㈃ ??</button>}
         {game.id === 'fiveSeconds' && <div className="five-second-dial"><strong>5.000</strong><span>STOP</span></div>}
         {game.id === 'timingStop' && <div className="timing-track"><i /><b /></div>}
         {game.id === 'numberOrder' && <div className="number-board">{numberTiles.map((tile) => <button key={tile} type="button">{tile}</button>)}</div>}
-        {game.id === 'movingTarget' && <div className="target-arena"><button type="button" aria-label="움직이는 표적"><Icon>radio_button_checked</Icon></button></div>}
+        {game.id === 'movingTarget' && <div className="target-arena"><button type="button" aria-label="?吏곸씠???쒖쟻"><Icon>radio_button_checked</Icon></button></div>}
         {game.id === 'memoryCard' && <div className="memory-board">{memoryTiles.map((tile, index) => <button key={`${tile}-${index}`} type="button">{tile}</button>)}</div>}
       </div>
       <div className="info-card"><Icon>touch_app</Icon> 데모 플레이에서는 버튼을 누르면 이번 차례 기록이 저장돼요.</div>
@@ -1374,7 +1731,7 @@ function LegacyRankingGameScreen({ game, participant, onComplete }) {
   )
 }
 
-function RankingResultScreen({ game, scores, onNext }) {
+function RankingResultScreen({ game, scores, settlementMode, onNext }) {
   const winnerScore = scores[0]
 
   return (
@@ -1382,7 +1739,7 @@ function RankingResultScreen({ game, scores, onNext }) {
       <TdsTitle centered id="ranking-result-title" subtitle={`${game.title} 결과`} title="전체 순위 결과" />
       <div className="winner-summary">
         <span className="winner-medal">1등</span>
-        <strong>{winnerScore?.participant} 님 면제권 획득</strong>
+        <strong>{winnerScore ? getRankingWinnerText(settlementMode, winnerScore.participant) : ''}</strong>
         <small>{winnerScore ? getGameScoreLabel(game, winnerScore) : ''}</small>
       </div>
       <ol className="ranking-list">
@@ -1399,19 +1756,21 @@ function RankingResultScreen({ game, scores, onNext }) {
   )
 }
 
-function TieRematchScreen({ tiedScores, onConfirm }) {
+function TieRematchScreen({ settlementMode, tiedScores, onConfirm }) {
+  const outcomeLabel = getSettlementOutcomeLabel(settlementMode)
+
   return (
     <section className="screen tie-rematch-screen" aria-labelledby="tie-rematch-title">
-      <TdsTitle centered id="tie-rematch-title" subtitle="1등이 동점이라 면제권자를 확정해야 해요." title="동점 재대결" />
+      <TdsTitle centered id="tie-rematch-title" subtitle={`1등이 동점이라 ${outcomeLabel}를 확정해야 해요.`} title="동점 재대결" />
       <div className="tie-card">
         <Icon>emoji_events</Icon>
         <strong>{tiedScores.map((score) => score.participant).join(', ')}</strong>
-        <p>동점자끼리 다시 겨루거나, 지금 바로 면제자를 확정할 수 있어요.</p>
+        <p>동점자끼리 다시 겨루거나, 지금 바로 {outcomeLabel}를 확정할 수 있어요.</p>
       </div>
       <div className="tie-actions">
         {tiedScores.map((score) => (
           <Button color="primary" display="full" key={score.participant} size="large" type="button" variant="weak" onClick={() => onConfirm(score.participant)}>
-            {score.participant} 면제자로 확정
+            {score.participant} {outcomeLabel}로 확정
           </Button>
         ))}
       </div>
@@ -1451,9 +1810,11 @@ function RouletteScreen({ amount, participants, settlementMode, spinning, onSpin
   )
 }
 
-function RouletteResultScreen({ amount, settlementMode, splitAmount, winner, onRetry, onNext }) {
+function RouletteResultScreen({ amount, canRetry, settlementMode, settlementResult, winner, onRetry, onNext }) {
   const modeLabel = getSettlementModeLabel(settlementMode)
   const isExemptMode = settlementMode === 'exempt'
+  const selectedLine = settlementResult.lineItems.find((item) => item.participant === winner)
+  const otherLine = settlementResult.lineItems.find((item) => item.participant !== winner)
 
   return (
     <section className="screen roulette-result-screen" aria-labelledby="roulette-result-title">
@@ -1478,33 +1839,36 @@ function RouletteResultScreen({ amount, settlementMode, splitAmount, winner, onR
           <div className="mini-result-roulette" aria-hidden="true">
             <span>{winner.slice(0, 1)}</span>
           </div>
-          <strong>{winner} 님 {isExemptMode ? '면제' : '선택'}</strong>
-          <p>나머지 인원 각 {formatWon(splitAmount)}</p>
+          <strong>{winner} 님 {isExemptMode ? '면제' : getSettlementOutcomeLabel(settlementMode)}</strong>
+          <p>{isExemptMode ? `나머지 인원 각 ${otherLine?.amountText}` : selectedLine?.amountText}</p>
           <em>총 {formatWon(amount)}</em>
           <span className="result-kicker"><Icon>auto_awesome</Icon> {isExemptMode ? '면제 확정' : `${modeLabel} 적용`}</span>
         </div>
       </div>
-      <TdsTitle centered id="roulette-result-title" subtitle={isExemptMode ? `나머지 세 명이 ${formatWon(splitAmount)}씩 나눠 내요.` : `룰렛 결과를 ${modeLabel} 방식에 적용해요.`} title={isExemptMode ? `${winner} 님이 면제됐어요` : `${winner} 님이 선택됐어요`} />
+      <TdsTitle centered id="roulette-result-title" subtitle={settlementResult.summaryText} title={isExemptMode ? `${winner} 님이 면제됐어요` : `${winner} 님이 선택됐어요`} />
       <div className="result-stats">
         <div><small>결제 총액</small><strong>{formatWon(amount)}</strong><Icon>receipt_long</Icon></div>
-        <div><small>{isExemptMode ? '면제자' : '선택된 사람'}</small><strong>{winner}</strong><Icon>person</Icon></div>
-        <div><small>1인당 금액</small><strong>{formatWon(splitAmount)}</strong></div>
+        <div><small>{getSettlementOutcomeLabel(settlementMode)}</small><strong>{winner}</strong><Icon>person</Icon></div>
+        <div><small>{selectedLine?.description}</small><strong>{selectedLine?.amountText}</strong></div>
+        {otherLine && <div><small>나머지 기준 금액</small><strong>{otherLine.amountText}</strong></div>}
       </div>
       <div className="button-row">
-        <Button color="primary" display="full" size="large" type="button" variant="weak" onClick={onRetry}><Icon>refresh</Icon> 다시 뽑기</Button>
+        {canRetry && <Button color="primary" display="full" size="large" type="button" variant="weak" onClick={onRetry}><Icon>refresh</Icon> 다시 뽑기</Button>}
         <Button color="primary" display="full" size="large" type="button" onClick={onNext}>금액 확인하기</Button>
       </div>
     </section>
   )
 }
 
-function RandomResultScreen({ amount, game, settlementMode, splitAmount, winner, onRetry, onNext }) {
+function RandomResultScreen({ amount, canRetry, game, settlementMode, settlementResult, winner, onRetry, onNext }) {
   const modeLabel = getSettlementModeLabel(settlementMode)
+  const selectedLine = settlementResult.lineItems.find((item) => item.participant === winner)
+  const otherLine = settlementResult.lineItems.find((item) => item.participant !== winner)
 
   return (
     <section className="screen roulette-result-screen random-result-screen" aria-labelledby="random-result-title">
       <div className="winner-illustration">
-        <div className="winner-artwork" role="img" aria-label={`${winner} 랜덤 결과 이미지`}>
+        <div className="winner-artwork" role="img" aria-label={`${winner} ?쒕뜡 寃곌낵 ?대?吏`}>
           <img alt="" aria-hidden="true" src={settlementCompleteImage} />
         </div>
         <div className="confetti-rain" data-testid="confetti-rain" aria-hidden="true">
@@ -1521,41 +1885,42 @@ function RandomResultScreen({ amount, game, settlementMode, splitAmount, winner,
       <TdsTitle centered id="random-result-title" subtitle={`${game.title} 결과를 ${modeLabel} 방식에 적용해요.`} title={`${winner} 님이 선택됐어요`} />
       <div className="result-stats">
         <div><small>결제 총액</small><strong>{formatWon(amount)}</strong><Icon>receipt_long</Icon></div>
-        <div><small>선택된 사람</small><strong>{winner}</strong><Icon>person</Icon></div>
-        <div><small>1인당 금액</small><strong>{formatWon(splitAmount)}</strong></div>
+        <div><small>{getSettlementOutcomeLabel(settlementMode)}</small><strong>{winner}</strong><Icon>person</Icon></div>
+        <div><small>{selectedLine?.description}</small><strong>{selectedLine?.amountText}</strong></div>
+        {otherLine && <div><small>나머지 기준 금액</small><strong>{otherLine.amountText}</strong></div>}
       </div>
       <div className="button-row">
-        <Button color="primary" display="full" size="large" type="button" variant="weak" onClick={onRetry}><Icon>refresh</Icon> 다시 뽑기</Button>
+        {canRetry && <Button color="primary" display="full" size="large" type="button" variant="weak" onClick={onRetry}><Icon>refresh</Icon> 다시 뽑기</Button>}
         <Button data-testid="random-result-next" color="primary" display="full" size="large" type="button" onClick={onNext}>금액 확인하기</Button>
       </div>
     </section>
   )
 }
 
-function FinalResultScreen({ amount, game, isGameResult = false, participants, settlementTitle, splitAmount, winner, onRestart, onShare }) {
+function FinalResultScreen({ amount, game, isGameResult = false, settlementResult, settlementTitle, onRestart, onShare }) {
   return (
     <section className="screen final-screen" aria-labelledby="final-title">
       <div className="success-icon"><Icon>check_circle</Icon></div>
       <TdsTitle centered id="final-title" subtitle="총 정산 금액" title={isGameResult ? '게임 정산이 완료됐어요' : '정산이 완료됐어요'} />
       <strong className="settlement-title">{settlementTitle}</strong>
       <strong className="big-amount">{formatWon(amount)}</strong>
-      <span className="mode-badge"><Icon>{isGameResult ? 'sports_esports' : 'casino'}</Icon> {isGameResult ? `${game?.title || '게임'} 1등 면제권 적용` : '한 명 면제 방식 적용'}</span>
+      <span className="mode-badge"><Icon>{isGameResult ? 'sports_esports' : 'casino'}</Icon> {isGameResult ? `${game?.title || '게임'} ${settlementResult.modeLabel} 적용` : `${settlementResult.modeLabel} 방식 적용`}</span>
       <ListHeader
         className="compact-list-header"
         title={<ListHeader.TitleParagraph>참여자별 금액</ListHeader.TitleParagraph>}
       />
       <ul className="tds-list result-list">
-        {participants.map((participant) => (
+        {settlementResult.lineItems.map((item) => (
           <ListRow
-            className={participant === winner ? 'surface-row exempted' : 'surface-row'}
-            key={participant}
-            left={<span className="avatar">{participant.slice(0, 1)}</span>}
-            contents={<TextStack description={participant === winner ? '면제 (0원)' : formatWon(splitAmount)} title={participant} />}
-            right={<Button color="dark" size="small" type="button" variant="weak">수정</Button>}
+            className={item.highlighted ? 'surface-row exempted' : 'surface-row'}
+            key={item.participant}
+            left={<span className="avatar">{item.participant.slice(0, 1)}</span>}
+            contents={<TextStack description={item.description} title={item.participant} />}
+            right={<b>{item.amountText}</b>}
           />
         ))}
       </ul>
-      <div className="celebration-card"><Icon>celebration</Icon> 운 좋게 {winner} 님이 면제자로 선정되었어요! 남은 인원이 각 {formatWon(splitAmount)}씩 부담합니다.</div>
+      <div className="celebration-card"><Icon>celebration</Icon> {settlementResult.summaryText}</div>
       <div className="button-row">
         <Button color="primary" display="full" size="large" type="button" variant="weak"><Icon>image</Icon> 이미지로 저장</Button>
         <Button color="primary" display="full" size="large" type="button" variant="weak" onClick={onRestart}><Icon>refresh</Icon> 새로운 정산</Button>
@@ -1645,18 +2010,12 @@ function SettingsScreen() {
           <strong id="settings-title">사용자님</strong>
           <p>settle-user@example.com</p>
         </div>
-        <ListHeader
-          className="compact-list-header"
-          title={<ListHeader.TitleParagraph>일반</ListHeader.TitleParagraph>}
-        />
+        <ListHeader className="compact-list-header" title={<ListHeader.TitleParagraph>일반</ListHeader.TitleParagraph>} />
         <ul className="tds-list">
           <SettingsRow icon="help" title="서비스 이용 안내" />
           <SettingsRow danger description="삭제된 데이터는 복구할 수 없습니다" icon="warning" title="정산 내역 전체 삭제" />
         </ul>
-        <ListHeader
-          className="compact-list-header"
-          title={<ListHeader.TitleParagraph>약관 및 지원</ListHeader.TitleParagraph>}
-        />
+        <ListHeader className="compact-list-header" title={<ListHeader.TitleParagraph>약관 및 지원</ListHeader.TitleParagraph>} />
         <ul className="tds-list">
           <SettingsRow icon="privacy_tip" title="개인정보 처리방침" />
           <SettingsRow icon="article" title="서비스 이용약관" />
@@ -1671,7 +2030,6 @@ function SettingsScreen() {
     </>
   )
 }
-
 function SettingsRow({ icon, title, description, danger = false }) {
   return (
     <ListRow
@@ -1686,10 +2044,10 @@ function SettingsRow({ icon, title, description, danger = false }) {
   )
 }
 
-function ShareSheet({ amount, open, participants, settlementTitle, splitAmount, winner, onClose }) {
+function ShareSheet({ amount, open, participants, settlementResult, settlementTitle, onClose }) {
   const { openToast } = useWebToast({ exitOnUnmount: false })
   const [shareActionPending, setShareActionPending] = useState(null)
-  const payload = buildSharePayload({ amount, participants, settlementTitle, splitAmount, winner })
+  const payload = buildSharePayload({ amount, participants, settlementResult, settlementTitle })
 
   async function runShareAction(action, successMessage, errorMessage) {
     setShareActionPending(action)
@@ -1764,11 +2122,11 @@ function ShareSheet({ amount, open, participants, settlementTitle, splitAmount, 
           <small>2024년 5월 24일 4인 모임</small>
           <p>총 정산 금액</p>
           <b>₩{amount.toLocaleString('ko-KR')}</b>
-          <span>+{Math.max(0, participants.length - 1)}</span>
+          <span>{payload.modeLabel}</span>
         </div>
         <div className="share-members">
-          {participants.slice(0, 2).map((participant) => (
-            <span key={participant}>{participant} {participant === winner ? '면제' : formatWon(splitAmount)}</span>
+          {payload.lineItems.slice(0, 2).map((item) => (
+            <span key={item.participant}>{item.participant} {item.amountText}</span>
           ))}
         </div>
         <div className="share-actions">
