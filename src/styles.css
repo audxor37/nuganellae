@@ -1634,6 +1634,142 @@ small {
   gap: 10px;
 }
 
+.tie-rematch-screen {
+  gap: 18px;
+  border: 4px solid #7357f4;
+  background:
+    linear-gradient(180deg, rgb(249 249 255 / 96%), rgb(247 248 255 / 96%)),
+    var(--surface-app);
+  padding-top: 18px;
+}
+
+.tie-rematch-matchup {
+  position: relative;
+  display: grid;
+  gap: 112px;
+  overflow: hidden;
+  border-radius: 2px;
+  background:
+    radial-gradient(circle at 50% 50%, rgb(49 90 196 / 22%), transparent 34%),
+    linear-gradient(180deg, #f1f4ff 0%, #d7def5 49%, #edf1ff 100%);
+  padding: 18px 0;
+}
+
+.tie-rematch-matchup::before {
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 1px;
+  background: rgb(255 255 255 / 44%);
+  content: "";
+}
+
+.tie-rematch-matchup.multi {
+  gap: 18px;
+}
+
+.tie-rematch-player-card {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-height: 88px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgb(226 232 246 / 92%);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 12px 14px;
+  box-shadow: 0 14px 28px rgb(45 60 100 / 10%);
+}
+
+.tie-rematch-player-card:nth-child(even) {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.tie-rematch-player-card small {
+  display: block;
+  color: #7357f4;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tie-rematch-player-card strong {
+  display: block;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.tie-rematch-player-card i {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  background: #edf2ff;
+  color: var(--primary-strong);
+  font-style: normal;
+}
+
+.tie-versus {
+  position: absolute;
+  left: 50%;
+  bottom: -78px;
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  transform: translateX(-50%);
+  border: 4px solid var(--surface);
+  border-radius: 50%;
+  background: #3f5fbd;
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 900;
+  box-shadow: 0 10px 20px rgb(47 74 155 / 34%);
+}
+
+.tie-rematch-matchup.multi .tie-versus {
+  bottom: -33px;
+}
+
+.tie-rule-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid #e2e8f8;
+  border-radius: 14px;
+  background: #f1f4ff;
+  padding: 18px;
+}
+
+.tie-rule-card > span {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 12px;
+  background: #5b7bec;
+  color: #ffffff;
+}
+
+.tie-rule-card p {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.55;
+}
+
+.tie-rule-card strong {
+  color: #3f5fbd;
+  font-size: 15px;
+  font-weight: 900;
+}
+
 .fast-random-stage {
   position: relative;
   display: grid;

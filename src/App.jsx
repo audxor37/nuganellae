@@ -48,7 +48,7 @@ const historyItems = [
 const settlementModes = [
   { id: 'equal', icon: 'groups', title: '똑같이 나누기', description: '모두 같은 금액을 내요.' },
   { id: 'exempt', icon: 'person_off', title: '한 명 면제', description: '한 명을 뽑고 나머지가 나눠 내요.' },
-  { id: 'extra', icon: 'add_card', title: '한 명 더 내기', description: '선택된 한 명이 2인분을 내요.' },
+  { id: 'extra', icon: 'add_card', title: '꼴등 더 내기', description: '꼴등이 2인분을 부담해요.' },
   { id: 'discount', icon: 'workspace_premium', title: '1등 덜 내기', description: '1등은 기본 1/N의 50%만 내요.' },
 ]
 
@@ -102,7 +102,7 @@ function buildSettlementPreview({ amount, participants, settlementMode, selected
 
   if (settlementMode === 'extra') {
     return {
-      rule: '1등/선택자는 2인분, 나머지는 1인분을 부담해요',
+      rule: '꼴등은 2인분, 나머지는 1인분을 부담해요',
       amounts: `예상 선택자 ${formatWon(selectedLine?.amount)} · 나머지 각 ${formatWon(otherLine?.amount)}`,
     }
   }
@@ -238,8 +238,8 @@ function buildSharePayload({ amount, participants, settlementResult, settlementT
     title,
     message: [
       title,
-      `珥??뺤궛 湲덉븸: ${formatWon(amount)}`,
-      `?뺤궛 諛⑹떇: ${result.modeLabel}`,
+      `총 정산 금액: ${formatWon(amount)}`,
+      `정산 방식: ${result.modeLabel}`,
       result.summaryText,
       memberLines.join(' / '),
     ].join('\n'),
@@ -270,12 +270,12 @@ function buildReceiptSvg(payload) {
       <rect width="500" height="560" rx="36" fill="#f9fafb"/>
       <rect x="28" y="28" width="444" height="504" rx="28" fill="#ffffff"/>
       <circle cx="250" cy="96" r="34" fill="#e8f3ff"/>
-      <text x="250" y="105" fill="#3182f6" font-size="34" font-weight="900" text-anchor="middle">??/text>
+      <text x="250" y="105" fill="#3182f6" font-size="34" font-weight="900" text-anchor="middle">누</text>
       <text x="250" y="158" fill="#191f28" font-size="30" font-weight="900" text-anchor="middle">${escapeSvgText(payload.title)}</text>
-      <text x="250" y="190" fill="#6b7684" font-size="18" font-weight="600" text-anchor="middle">珥?${formatWon(payload.amount)} 쨌 ${escapeSvgText(payload.modeLabel)}</text>
+      <text x="250" y="190" fill="#6b7684" font-size="18" font-weight="600" text-anchor="middle">총 ${formatWon(payload.amount)} · ${escapeSvgText(payload.modeLabel)}</text>
       ${rows}
       <rect x="48" y="430" width="404" height="70" rx="18" fill="#f2f4f6"/>
-      <text x="72" y="474" fill="#4e5968" font-size="20" font-weight="700">${escapeSvgText(payload.modeLabel)} ?곸슜</text>
+      <text x="72" y="474" fill="#4e5968" font-size="20" font-weight="700">${escapeSvgText(payload.modeLabel)} 적용</text>
       <text x="428" y="474" fill="#3182f6" font-size="24" font-weight="900" text-anchor="end">${formatWon(payload.amount)}</text>
     </svg>
   `
@@ -453,6 +453,19 @@ function getRankedScores(scores) {
   })
 }
 
+function getSettlementTargetScores(scores, settlementMode) {
+  if (scores.length === 0) {
+    return []
+  }
+
+  if (settlementMode === 'extra') {
+    const lastRank = Math.max(...scores.map((score) => score.rank))
+    return scores.filter((score) => score.rank === lastRank)
+  }
+
+  return scores.filter((score) => score.rank === 1)
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState(tabs.home)
   const [step, setStep] = useState(steps.start)
@@ -461,14 +474,17 @@ function App() {
   const [participants, setParticipants] = useState(baseParticipants)
   const [newParticipant, setNewParticipant] = useState('')
   const [settlementMode, setSettlementMode] = useState('exempt')
-  const [winner, setWinner] = useState('?곹씗')
+  const [winner, setWinner] = useState(baseParticipants[baseParticipants.length - 1])
   const [shareOpen, setShareOpen] = useState(false)
-  const [filter, setFilter] = useState('?꾩껜')
+  const [filter, setFilter] = useState('전체')
   const [stepHistory, setStepHistory] = useState([])
   const [rouletteSpinning, setRouletteSpinning] = useState(false)
   const [selectedGameId, setSelectedGameId] = useState('roulette')
   const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0)
   const [gameScores, setGameScores] = useState([])
+  const [rematchParticipants, setRematchParticipants] = useState([])
+  const [rematchScores, setRematchScores] = useState([])
+  const [isRematchRound, setIsRematchRound] = useState(false)
   const [allowReselect, setAllowReselect] = useState(true)
 
   const paidParticipants = useMemo(
@@ -489,7 +505,10 @@ function App() {
   const canProceedFromTitle = settlementTitle.trim().length > 0
   const selectedGame = gameCatalog.find((game) => game.id === selectedGameId) || gameCatalog[0]
   const rankedScores = useMemo(() => getRankedScores(gameScores, selectedGame), [gameScores, selectedGame])
-  const firstPlaceScores = rankedScores.filter((score) => score.rank === 1)
+  const rematchRankedScores = useMemo(() => getRankedScores(rematchScores, selectedGame), [rematchScores, selectedGame])
+  const settlementTargetScores = getSettlementTargetScores(isRematchRound ? rematchRankedScores : rankedScores, settlementMode)
+  const activeGameParticipants = isRematchRound ? rematchParticipants : participants
+  const activeGameScores = isRematchRound ? rematchScores : gameScores
   const isFinalStep = step === steps.finalResult || step === steps.gameFinalResult
   const isResultStep = step === steps.rouletteResult || step === steps.rankingResult || step === steps.tieRematch
   const isGameInProgressStep = step === steps.participantTurn || step === steps.gamePlay || step === steps.roulette
@@ -501,7 +520,7 @@ function App() {
     }
 
     const timerId = window.setTimeout(() => {
-      const nextWinner = participants.includes('?곹씗') ? '?곹씗' : participants[participants.length - 1]
+      const nextWinner = participants[participants.length - 1]
       setWinner(nextWinner)
       setRouletteSpinning(false)
       navigateHomeStep(steps.rouletteResult)
@@ -620,6 +639,9 @@ function App() {
   function resetGameProgress() {
     setCurrentPlayerIndex(0)
     setGameScores([])
+    setRematchParticipants([])
+    setRematchScores([])
+    setIsRematchRound(false)
   }
 
   function resetSettlementDraft() {
@@ -661,34 +683,58 @@ function App() {
     navigateHomeStep(steps.gamePlay)
   }
 
+  function startTieRematch() {
+    const nextRematchParticipants = settlementTargetScores.map((score) => score.participant)
+    setRematchParticipants(nextRematchParticipants)
+    setRematchScores([])
+    setIsRematchRound(true)
+    setCurrentPlayerIndex(0)
+    navigateHomeStep(steps.participantTurn)
+  }
+
   function completeRandomGame(selectedParticipant) {
     setWinner(selectedParticipant)
     navigateHomeStep(steps.rouletteResult)
   }
 
   function completeGameTurn(measuredScore) {
-    const participant = participants[currentPlayerIndex]
+    const participant = activeGameParticipants[currentPlayerIndex]
     const nextScores = [
-      ...gameScores,
+      ...activeGameScores,
       measuredScore || buildGameScore({ gameId: selectedGame.id, participant, index: currentPlayerIndex }),
     ]
 
-    setGameScores(nextScores)
+    if (isRematchRound) {
+      setRematchScores(nextScores)
+    } else {
+      setGameScores(nextScores)
+    }
 
-    if (currentPlayerIndex < participants.length - 1) {
+    if (currentPlayerIndex < activeGameParticipants.length - 1) {
       setCurrentPlayerIndex((index) => index + 1)
       navigateHomeStep(steps.participantTurn)
       return
     }
 
     const ranked = getRankedScores(nextScores, selectedGame)
-    const leaders = ranked.filter((score) => score.rank === 1)
-    if (leaders.length > 1) {
+    const targetScores = getSettlementTargetScores(ranked, settlementMode)
+    if (targetScores.length > 1) {
+      if (isRematchRound) {
+        setRematchParticipants(targetScores.map((score) => score.participant))
+      }
       navigateHomeStep(steps.tieRematch)
       return
     }
 
-    setWinner(leaders[0].participant)
+    setWinner(targetScores[0].participant)
+    if (isRematchRound) {
+      setIsRematchRound(false)
+      setRematchParticipants([])
+      setRematchScores([])
+      navigateHomeStep(steps.gameFinalResult, { resetHistory: true })
+      return
+    }
+
     navigateHomeStep(steps.rankingResult)
   }
 
@@ -770,18 +816,18 @@ function App() {
           <PlayOrderScreen participants={participants} onNext={() => navigateHomeStep(steps.participantTurn)} />
         )}
         {activeTab === tabs.home && step === steps.participantTurn && (
-          <ParticipantTurnScreen participant={participants[currentPlayerIndex]} progress={`${currentPlayerIndex + 1}/${participants.length}`} onNext={() => startParticipantTurn(currentPlayerIndex)} />
+          <ParticipantTurnScreen participant={activeGameParticipants[currentPlayerIndex]} progress={`${currentPlayerIndex + 1}/${activeGameParticipants.length}`} onNext={() => startParticipantTurn(currentPlayerIndex)} />
         )}
         {activeTab === tabs.home && step === steps.gamePlay && (
           selectedGame.category === 'random'
             ? <RandomGameScreen game={selectedGame} participants={participants} onComplete={completeRandomGame} />
-            : <RankingGameScreen game={selectedGame} participant={participants[currentPlayerIndex]} playerIndex={currentPlayerIndex} previousScores={gameScores} onComplete={completeGameTurn} />
+            : <RankingGameScreen game={selectedGame} participant={activeGameParticipants[currentPlayerIndex]} playerIndex={currentPlayerIndex} previousScores={activeGameScores} onComplete={completeGameTurn} />
         )}
         {activeTab === tabs.home && step === steps.rankingResult && (
-          <RankingResultScreen game={selectedGame} scores={rankedScores} settlementMode={settlementMode} onNext={() => confirmGameWinner(firstPlaceScores[0]?.participant || winner)} />
+          <RankingResultScreen game={selectedGame} scores={rankedScores} settlementMode={settlementMode} onNext={() => confirmGameWinner(settlementTargetScores[0]?.participant || winner)} />
         )}
         {activeTab === tabs.home && step === steps.tieRematch && (
-          <TieRematchScreen settlementMode={settlementMode} tiedScores={firstPlaceScores} onConfirm={confirmGameWinner} />
+          <TieRematchScreen game={selectedGame} settlementMode={settlementMode} tiedScores={settlementTargetScores} onStartRematch={startTieRematch} />
         )}
         {activeTab === tabs.home && step === steps.roulette && (
           <RouletteScreen amount={effectiveAmount} participants={participants} settlementMode={settlementMode} spinning={rouletteSpinning} onSpin={spinRoulette} />
@@ -814,7 +860,7 @@ function App() {
           />
         )}
         {activeTab === tabs.home && step === steps.detail && (
-          <DetailScreen amount={84000} splitAmount={28000} winner="?곹씗" onBack={() => setActiveTab(tabs.history)} onShare={() => setShareOpen(true)} />
+          <DetailScreen amount={84000} splitAmount={28000} winner="영희" onBack={() => setActiveTab(tabs.history)} onShare={() => setShareOpen(true)} />
         )}
 
         <BottomNav activeTab={activeTab} onNavigate={(tab) => {
@@ -1065,7 +1111,7 @@ function getSettlementModeLabel(mode) {
 
 function getSettlementOutcomeLabel(mode) {
   if (mode === 'extra') {
-    return '추가 부담자'
+    return '2인분 부담자'
   }
 
   if (mode === 'discount') {
@@ -1077,7 +1123,7 @@ function getSettlementOutcomeLabel(mode) {
 
 function getRankingWinnerText(mode, participant) {
   if (mode === 'extra') {
-    return `${participant} 님 추가 부담자로 확정`
+    return `${participant} 님 2인분 부담자로 확정`
   }
 
   if (mode === 'discount') {
@@ -1135,6 +1181,11 @@ function GameSelectScreen({ amount, games, participants, selectedGameId, settlem
 
 function GameRulesScreen({ amount, game, participants, settlementMode, winner, onNext }) {
   const outcomeLabel = getSettlementOutcomeLabel(settlementMode)
+  const targetRankLabel = settlementMode === 'extra' ? '꼴등' : '1등'
+  const targetRuleTitle = settlementMode === 'extra' ? '꼴등 2인분 부담' : `1등 ${outcomeLabel}`
+  const targetRuleCopy = settlementMode === 'extra'
+    ? '순위형 게임은 꼴등에게 2인분 부담을 적용해요.'
+    : '순위형 게임은 1등에게 선택한 정산 방식을 적용해요.'
 
   return (
     <section className="screen game-rules-screen" aria-labelledby="game-rules-title">
@@ -1146,8 +1197,8 @@ function GameRulesScreen({ amount, game, participants, settlementMode, winner, o
       </div>
       <div className="rule-grid">
         <div><Icon>looks_one</Icon><strong>한 명씩 플레이</strong><small>참여자 순서대로 이 게임을 진행해요.</small></div>
-        <div><Icon>workspace_premium</Icon><strong>1등 {outcomeLabel}</strong><small>순위형 게임은 1등에게 선택한 정산 방식을 적용해요.</small></div>
-        <div><Icon>restart_alt</Icon><strong>동점 재대결</strong><small>1등이 동점이면 재대결 화면에서 확정해요.</small></div>
+        <div><Icon>workspace_premium</Icon><strong>{targetRuleTitle}</strong><small>{targetRuleCopy}</small></div>
+        <div><Icon>restart_alt</Icon><strong>동점 재대결</strong><small>{targetRankLabel}이 동점이면 재대결 화면에서 확정해요.</small></div>
       </div>
       <SettlementRulePreview amount={amount} participants={participants} selectedParticipant={winner} settlementMode={settlementMode} />
       <ScreenCTA icon="arrow_forward" testId="game-rules-next" onClick={onNext}>플레이 순서 확인</ScreenCTA>
@@ -1179,7 +1230,7 @@ function ParticipantTurnScreen({ participant, progress, onNext }) {
       <TdsTitle centered id="turn-title" subtitle={`${progress} 플레이어`} title="참여자 전환" />
       <div className="turn-card">
         <span className="avatar giant">{participant.slice(0, 1)}</span>
-        <strong>{participant} 李⑤??덉슂</strong>
+        <strong>{participant} 님 차례예요</strong>
         <p>다른 사람의 기록이 보이지 않게 이 기기를 넘긴 뒤 시작해 주세요.</p>
       </div>
       <ScreenCTA icon="play_arrow" testId="participant-turn-start" onClick={onNext}>{participant} 시작하기</ScreenCTA>
@@ -1305,6 +1356,7 @@ function RankingGameScreen({ game, participant, playerIndex = 0, previousScores 
   }, [countdown, needsCountdown, readyToPlay])
 
   const isPreparing = needsCountdown && !readyToPlay
+  const completionDisabled = game.id === 'movingTarget' && measuredScore == null
 
   return (
     <section className={`screen ranking-game-screen ${game.id}-screen${isPreparing ? ' preparing-countdown' : ''}`} aria-labelledby="ranking-game-title">
@@ -1318,7 +1370,7 @@ function RankingGameScreen({ game, participant, playerIndex = 0, previousScores 
         {readyToPlay && game.id === 'movingTarget' && <MovingTargetGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
         {readyToPlay && game.id === 'memoryCard' && <MemoryCardGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
       </div>
-      <ScreenCTA icon="check" testId="complete-game-turn" onClick={() => onComplete(measuredScore)}>이번 차례 완료</ScreenCTA>
+      <ScreenCTA disabled={completionDisabled} icon="check" testId="complete-game-turn" onClick={() => onComplete(measuredScore)}>이번 차례 완료</ScreenCTA>
       {isPreparing && <GameCountdownOverlay count={countdown} game={game} />}
     </section>
   )
@@ -1639,7 +1691,7 @@ function MovingTargetGameScreen({ game, participant, onScore }) {
           </button>
         ))}
       </div>
-      <Button data-testid="target-start" color="primary" display="full" size="large" type="button" disabled={running} onClick={start}>START</Button>
+      {!done && <Button data-testid="target-start" color="primary" display="full" size="large" type="button" disabled={running} onClick={start}>START</Button>}
       {done && <strong className="game-live-score">{hits} hits</strong>}
     </div>
   )
@@ -1718,11 +1770,11 @@ function LegacyRankingGameScreen({ game, participant, onComplete }) {
     <section className={`screen ranking-game-screen ${game.id}-screen`} aria-labelledby="ranking-game-title">
       <TdsTitle centered id="ranking-game-title" subtitle={`${participant} 님의 기록을 측정해요.`} title={game.title} />
       <div className="game-play-stage">
-        {game.id === 'reaction' && <button className="reaction-pad" type="button">珥덈줉?됱씠 ?섎㈃ ??</button>}
+        {game.id === 'reaction' && <button className="reaction-pad" type="button">초록색이 되면 탭</button>}
         {game.id === 'fiveSeconds' && <div className="five-second-dial"><strong>5.000</strong><span>STOP</span></div>}
         {game.id === 'timingStop' && <div className="timing-track"><i /><b /></div>}
         {game.id === 'numberOrder' && <div className="number-board">{numberTiles.map((tile) => <button key={tile} type="button">{tile}</button>)}</div>}
-        {game.id === 'movingTarget' && <div className="target-arena"><button type="button" aria-label="?吏곸씠???쒖쟻"><Icon>radio_button_checked</Icon></button></div>}
+        {game.id === 'movingTarget' && <div className="target-arena"><button type="button" aria-label="움직이는 표적"><Icon>radio_button_checked</Icon></button></div>}
         {game.id === 'memoryCard' && <div className="memory-board">{memoryTiles.map((tile, index) => <button key={`${tile}-${index}`} type="button">{tile}</button>)}</div>}
       </div>
       <div className="info-card"><Icon>touch_app</Icon> 데모 플레이에서는 버튼을 누르면 이번 차례 기록이 저장돼요.</div>
@@ -1732,19 +1784,21 @@ function LegacyRankingGameScreen({ game, participant, onComplete }) {
 }
 
 function RankingResultScreen({ game, scores, settlementMode, onNext }) {
-  const winnerScore = scores[0]
+  const targetScores = getSettlementTargetScores(scores, settlementMode)
+  const targetScore = targetScores[0]
+  const targetRankLabel = settlementMode === 'extra' ? '꼴등' : '1등'
 
   return (
     <section className="screen ranking-result-screen" aria-labelledby="ranking-result-title">
       <TdsTitle centered id="ranking-result-title" subtitle={`${game.title} 결과`} title="전체 순위 결과" />
       <div className="winner-summary">
-        <span className="winner-medal">1등</span>
-        <strong>{winnerScore ? getRankingWinnerText(settlementMode, winnerScore.participant) : ''}</strong>
-        <small>{winnerScore ? getGameScoreLabel(game, winnerScore) : ''}</small>
+        <span className="winner-medal">{targetRankLabel}</span>
+        <strong>{targetScore ? getRankingWinnerText(settlementMode, targetScore.participant) : ''}</strong>
+        <small>{targetScore ? getGameScoreLabel(game, targetScore) : ''}</small>
       </div>
       <ol className="ranking-list">
         {scores.map((score) => (
-          <li className={score.rank === 1 ? 'rank-row first' : 'rank-row'} key={score.participant}>
+          <li className={targetScores.some((target) => target.participant === score.participant) ? 'rank-row first' : 'rank-row'} key={score.participant}>
             <span>{score.rank}등</span>
             <strong>{score.participant}</strong>
             <small>{getGameScoreLabel(game, score)}</small>
@@ -1756,24 +1810,33 @@ function RankingResultScreen({ game, scores, settlementMode, onNext }) {
   )
 }
 
-function TieRematchScreen({ settlementMode, tiedScores, onConfirm }) {
+function TieRematchScreen({ settlementMode, tiedScores, onStartRematch }) {
   const outcomeLabel = getSettlementOutcomeLabel(settlementMode)
 
   return (
     <section className="screen tie-rematch-screen" aria-labelledby="tie-rematch-title">
-      <TdsTitle centered id="tie-rematch-title" subtitle={`1등이 동점이라 ${outcomeLabel}를 확정해야 해요.`} title="동점 재대결" />
-      <div className="tie-card">
-        <Icon>emoji_events</Icon>
-        <strong>{tiedScores.map((score) => score.participant).join(', ')}</strong>
-        <p>동점자끼리 다시 겨루거나, 지금 바로 {outcomeLabel}를 확정할 수 있어요.</p>
-      </div>
-      <div className="tie-actions">
-        {tiedScores.map((score) => (
-          <Button color="primary" display="full" key={score.participant} size="large" type="button" variant="weak" onClick={() => onConfirm(score.participant)}>
-            {score.participant} {outcomeLabel}로 확정
-          </Button>
+      <TdsTitle centered id="tie-rematch-title" subtitle="동점인 참여자끼리 한 번 더 대결해 순위를 정해요." title="동점자가 나왔어요!" />
+      <div className={tiedScores.length > 2 ? 'tie-rematch-matchup multi' : 'tie-rematch-matchup'}>
+        {tiedScores.map((score, index) => (
+          <div className="tie-rematch-player-card" data-testid="tie-rematch-player-card" key={score.participant}>
+            <span className="avatar">{score.participant.slice(0, 1)}</span>
+            <span>
+              <small>PARTICIPANT</small>
+              <strong>{score.participant}</strong>
+            </span>
+            <i aria-label={`${score.participant} ${outcomeLabel} 후보`}><Icon>person</Icon></i>
+            {index === 0 && <b className="tie-versus">VS</b>}
+          </div>
         ))}
       </div>
+      <div className="tie-rule-card" data-testid="tie-rematch-rule">
+        <span><Icon>gavel</Icon></span>
+        <p>
+          <strong>재대결 규칙</strong>
+          이전 게임을 한 번 더 진행하여, 동점자 사이의 최종 순위를 가려냅니다.
+        </p>
+      </div>
+      <ScreenCTA icon="replay" testId="tie-rematch-start" onClick={onStartRematch}>재대결 시작하기</ScreenCTA>
     </section>
   )
 }

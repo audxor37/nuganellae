@@ -61,6 +61,16 @@ function expectDisplayedAmount(value) {
   ))).toBeInTheDocument()
 }
 
+async function completeFiveSecondTurn(participant, elapsedMs) {
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(`${participant} 시작하기`) }))
+  fireEvent.click(screen.getByTestId('five-second-start'))
+  await act(async () => {
+    vi.advanceTimersByTime(elapsedMs)
+  })
+  fireEvent.click(screen.getByTestId('five-second-stop'))
+  fireEvent.click(screen.getByTestId('complete-game-turn'))
+}
+
 afterEach(() => {
   vi.useRealTimers()
   vi.clearAllMocks()
@@ -356,9 +366,11 @@ test('keeps all settlement modes and lets roulette start from each mode', () => 
   enterAmountWithQuickButton()
   fireEvent.click(screen.getByRole('button', { name: /정산 방식 고르기/ }))
 
-  for (const mode of ['똑같이 나누기', '한 명 면제', '한 명 더 내기', '1등 덜 내기']) {
+  for (const mode of ['똑같이 나누기', '한 명 면제', '꼴등 더 내기', '1등 덜 내기']) {
     expect(screen.getByRole('button', { name: new RegExp(mode) })).toBeInTheDocument()
   }
+  expect(screen.queryByRole('button', { name: /한 명 더 내기/ })).not.toBeInTheDocument()
+  expect(screen.getByTestId('method-extra')).toHaveTextContent('꼴등이 2인분을 부담해요.')
 
   fireEvent.click(screen.getByRole('button', { name: /한 명 면제/ }))
   fireEvent.click(screen.getByRole('button', { name: /게임 선택하기|결과 확인하기/ }))
@@ -385,7 +397,7 @@ test('equal settlement immediately shows a 1/N final result without starting a g
   expect(screen.getAllByText('12,500원')).toHaveLength(4)
 })
 
-test('extra payer mode explains the game settlement ratio before the game starts', () => {
+test('loser extra payer mode explains the game settlement ratio before the game starts', () => {
   renderApp()
 
   startSettlement()
@@ -394,11 +406,11 @@ test('extra payer mode explains the game settlement ratio before the game starts
   fireEvent.click(screen.getByRole('button', { name: '+1만 원' }))
   fireEvent.click(screen.getByRole('button', { name: /참여자 입력하기/ }))
   fireEvent.click(screen.getByRole('button', { name: /정산 방식 고르기/ }))
-  fireEvent.click(screen.getByRole('button', { name: /한 명 더 내기/ }))
+  fireEvent.click(screen.getByRole('button', { name: /꼴등 더 내기/ }))
   fireEvent.click(screen.getByTestId('method-next'))
 
   expect(screen.getByRole('heading', { name: '게임 선택하기' })).toBeInTheDocument()
-  expect(screen.getByText(/1등\/선택자는 2인분/)).toBeInTheDocument()
+  expect(screen.getByText(/꼴등은 2인분/)).toBeInTheDocument()
   expect(screen.getByText(/예상 선택자 24,000원/)).toBeInTheDocument()
   expect(screen.getByText(/나머지 각 12,000원/)).toBeInTheDocument()
 })
@@ -421,14 +433,14 @@ test('discount winner mode explains the 50 percent discount before the game star
   expect(screen.getByText(/나머지 각 17,500원/)).toBeInTheDocument()
 })
 
-test('extra payer settlement charges the selected participant two shares', async () => {
+test('loser extra payer settlement charges the selected random participant two shares', async () => {
   vi.useFakeTimers()
   renderApp()
 
   startSettlement()
   enterAmountWithQuickButton()
   fireEvent.click(screen.getByRole('button', { name: /정산 방식 고르기/ }))
-  fireEvent.click(screen.getByRole('button', { name: /한 명 더 내기/ }))
+  fireEvent.click(screen.getByRole('button', { name: /꼴등 더 내기/ }))
   fireEvent.click(screen.getByTestId('method-next'))
   fireEvent.click(screen.getByTestId('game-card-fastRandom'))
   fireEvent.click(screen.getByTestId('game-select-next'))
@@ -442,10 +454,78 @@ test('extra payer settlement charges the selected participant two shares', async
   fireEvent.click(screen.getByTestId('random-result-next'))
 
   expect(screen.getByRole('heading', { name: '정산이 완료됐어요' })).toBeInTheDocument()
-  expect(screen.getByText('한 명 더 내기 방식 적용')).toBeInTheDocument()
+  expect(screen.getByText('꼴등 더 내기 방식 적용')).toBeInTheDocument()
   expect(screen.getByText('2인분 부담')).toBeInTheDocument()
   expect(screen.getByText('20,000원')).toBeInTheDocument()
   expect(screen.getAllByText('10,000원')).toHaveLength(3)
+})
+
+test('loser extra payer ranking game rematches tied last-place players', async () => {
+  vi.useFakeTimers()
+  renderApp()
+
+  startSettlement()
+  enterAmountWithQuickButton()
+  fireEvent.click(screen.getByRole('button', { name: /정산 방식 고르기/ }))
+  fireEvent.click(screen.getByRole('button', { name: /꼴등 더 내기/ }))
+  fireEvent.click(screen.getByTestId('method-next'))
+  fireEvent.click(screen.getByTestId('game-card-fiveSeconds'))
+  fireEvent.click(screen.getByTestId('game-select-next'))
+  fireEvent.click(screen.getByTestId('game-rules-next'))
+  fireEvent.click(screen.getByTestId('play-order-next'))
+
+  await completeFiveSecondTurn('민수', 5000)
+  await completeFiveSecondTurn('지훈', 5100)
+  await completeFiveSecondTurn('수진', 5400)
+  await completeFiveSecondTurn('영희', 5400)
+
+  expect(screen.getByRole('heading', { name: '동점자가 나왔어요!' })).toBeInTheDocument()
+  const tiedCards = screen.getAllByTestId('tie-rematch-player-card')
+  expect(tiedCards).toHaveLength(2)
+  expect(tiedCards[0]).toHaveTextContent('수진')
+  expect(tiedCards[1]).toHaveTextContent('영희')
+
+  fireEvent.click(screen.getByTestId('tie-rematch-start'))
+  expect(screen.getByText('1/2 플레이어')).toBeInTheDocument()
+  expect(screen.getByText('수진 님 차례예요')).toBeInTheDocument()
+
+  fireEvent.click(screen.getByTestId('participant-turn-start'))
+  fireEvent.click(screen.getByTestId('complete-game-turn'))
+  fireEvent.click(screen.getByTestId('participant-turn-start'))
+  fireEvent.click(screen.getByTestId('complete-game-turn'))
+
+  expect(screen.getByRole('heading', { name: '동점자가 나왔어요!' })).toBeInTheDocument()
+  expect(screen.getAllByTestId('tie-rematch-player-card')).toHaveLength(2)
+})
+
+test('loser extra payer ranking rematch settles the single loser as two-share payer', async () => {
+  vi.useFakeTimers()
+  renderApp()
+
+  startSettlement()
+  enterAmountWithQuickButton()
+  fireEvent.click(screen.getByRole('button', { name: /정산 방식 고르기/ }))
+  fireEvent.click(screen.getByRole('button', { name: /꼴등 더 내기/ }))
+  fireEvent.click(screen.getByTestId('method-next'))
+  fireEvent.click(screen.getByTestId('game-card-fiveSeconds'))
+  fireEvent.click(screen.getByTestId('game-select-next'))
+  fireEvent.click(screen.getByTestId('game-rules-next'))
+  fireEvent.click(screen.getByTestId('play-order-next'))
+
+  await completeFiveSecondTurn('민수', 5000)
+  await completeFiveSecondTurn('지훈', 5100)
+  await completeFiveSecondTurn('수진', 5400)
+  await completeFiveSecondTurn('영희', 5400)
+
+  fireEvent.click(screen.getByTestId('tie-rematch-start'))
+
+  await completeFiveSecondTurn('수진', 5000)
+  await completeFiveSecondTurn('영희', 5400)
+
+  expect(screen.getByRole('heading', { name: '게임 정산이 완료됐어요' })).toBeInTheDocument()
+  expect(screen.getByText(/꼴등 더 내기 적용/)).toBeInTheDocument()
+  expect(screen.getByText('영희')).toBeInTheDocument()
+  expect(screen.getByText('2인분 부담')).toBeInTheDocument()
 })
 
 test('ranking game sends the first-place player to the game settlement result as exempt winner', () => {
@@ -481,7 +561,8 @@ test('ranking game sends the first-place player to the game settlement result as
   expect(screen.getByText('면제 (0원)')).toBeInTheDocument()
 })
 
-test('tie for first place opens the rematch screen before final settlement', () => {
+test('tie for first place starts a real rematch before final settlement', async () => {
+  vi.useFakeTimers()
   renderApp()
 
   startSettlement()
@@ -500,11 +581,65 @@ test('tie for first place opens the rematch screen before final settlement', () 
     fireEvent.click(screen.getByRole('button', { name: /이번 차례 완료/ }))
   }
 
-  expect(screen.getByRole('heading', { name: '동점 재대결' })).toBeInTheDocument()
-  expect(screen.getByText(/민수, 지훈/)).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: '동점자가 나왔어요!' })).toBeInTheDocument()
+  expect(screen.getByText('동점인 참여자끼리 한 번 더 대결해 순위를 정해요.')).toBeInTheDocument()
+  expect(screen.getAllByTestId('tie-rematch-player-card')).toHaveLength(2)
+  expect(screen.getByTestId('tie-rematch-rule')).toHaveTextContent('이전 게임을 한 번 더 진행하여, 동점자 사이의 최종 순위를 가려냅니다.')
+  expect(screen.queryByRole('button', { name: /면제자로 확정/ })).not.toBeInTheDocument()
 
-  fireEvent.click(screen.getByRole('button', { name: /민수 면제자로 확정/ }))
+  fireEvent.click(screen.getByTestId('tie-rematch-start'))
+  expect(screen.getByText('1/2 플레이어')).toBeInTheDocument()
+  expect(screen.getByText('민수 님 차례예요')).toBeInTheDocument()
+
+  fireEvent.click(screen.getByTestId('participant-turn-start'))
+  fireEvent.click(screen.getByTestId('five-second-start'))
+  await act(async () => {
+    vi.advanceTimersByTime(5000)
+  })
+  fireEvent.click(screen.getByTestId('five-second-stop'))
+  fireEvent.click(screen.getByTestId('complete-game-turn'))
+
+  fireEvent.click(screen.getByTestId('participant-turn-start'))
+  fireEvent.click(screen.getByTestId('five-second-start'))
+  await act(async () => {
+    vi.advanceTimersByTime(5400)
+  })
+  fireEvent.click(screen.getByTestId('five-second-stop'))
+  fireEvent.click(screen.getByTestId('complete-game-turn'))
+
   expect(screen.getByRole('heading', { name: '게임 정산이 완료됐어요' })).toBeInTheDocument()
+  expect(screen.getByText('민수')).toBeInTheDocument()
+  expect(screen.getByText('면제 (0원)')).toBeInTheDocument()
+})
+
+test('tie rematch can repeat when rematch players tie again', () => {
+  renderApp()
+
+  startSettlement()
+  enterAmountWithQuickButton()
+  fireEvent.click(screen.getByRole('button', { name: /정산 방식 고르기/ }))
+  fireEvent.click(screen.getByRole('button', { name: /한 명 면제/ }))
+  fireEvent.click(screen.getByRole('button', { name: /게임 선택하기|결과 확인하기/ }))
+  fireEvent.click(screen.getByRole('button', { name: /게임 선택하기/ }))
+  fireEvent.click(screen.getByRole('button', { name: /딱 5초 챌린지/ }))
+  fireEvent.click(screen.getByRole('button', { name: /게임 시작하기/ }))
+  fireEvent.click(screen.getByRole('button', { name: /플레이 순서 확인/ }))
+  fireEvent.click(screen.getByRole('button', { name: /첫 번째 참여자에게 넘기기/ }))
+
+  for (const participant of ['민수', '지훈', '수진', '영희']) {
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`${participant} 시작하기`) }))
+    fireEvent.click(screen.getByRole('button', { name: /이번 차례 완료/ }))
+  }
+
+  fireEvent.click(screen.getByTestId('tie-rematch-start'))
+
+  for (const participant of ['민수', '지훈']) {
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`${participant} 시작하기`) }))
+    fireEvent.click(screen.getByRole('button', { name: /이번 차례 완료/ }))
+  }
+
+  expect(screen.getByRole('heading', { name: '동점자가 나왔어요!' })).toBeInTheDocument()
+  expect(screen.getAllByTestId('tie-rematch-player-card')).toHaveLength(2)
 })
 function openGameSelectForExecution() {
   renderApp()
@@ -969,7 +1104,11 @@ test('moving target game counts hits during the timed round', async () => {
   vi.useFakeTimers()
   startRankingGameForExecution('movingTarget')
 
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
   fireEvent.click(screen.getByTestId('target-start'))
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
+  expect(screen.getByTestId('target-start')).toBeDisabled()
+
   fireEvent.pointerDown(screen.getAllByTestId('moving-target')[0])
   fireEvent.pointerDown(screen.getAllByTestId('moving-target')[0])
 
@@ -980,6 +1119,8 @@ test('moving target game counts hits during the timed round', async () => {
   })
 
   expect(screen.getByText(/2 hits/)).toBeInTheDocument()
+  expect(screen.getByTestId('complete-game-turn')).not.toBeDisabled()
+  expect(screen.queryByTestId('target-start')).not.toBeInTheDocument()
 })
 
 test('memory card game completes real pairs and records attempts', async () => {
