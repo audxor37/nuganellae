@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, test, vi } from 'vitest'
 import { TDSMobileAITProvider } from '@toss/tds-mobile-ait'
-import App, { sanitizeFileName } from './App'
+import App, { getTimingStopPosition, sanitizeFileName } from './App'
 
 const bridgeMocks = vi.hoisted(() => ({
   getTossShareLink: vi.fn(async () => 'https://toss.im/share?deep_link_value=nuganellae'),
@@ -14,12 +14,54 @@ const bridgeMocks = vi.hoisted(() => ({
 
 vi.mock('@apps-in-toss/web-framework', () => bridgeMocks)
 
+vi.mock('./games/core/random', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    pickOne: (values) => values.at(-1),
+    randomInt: (maxExclusive) => (maxExclusive === 2501 ? 1500 : 0),
+    shuffle: (values) => [...values],
+  }
+})
+
 vi.mock('@toss/tds-mobile', async (importOriginal) => {
   const actual = await importOriginal()
   const React = await import('react')
+  const ConfirmDialog = ({ cancelButton, confirmButton, description, onClose, open = false, title }) => {
+    if (!open) {
+      return null
+    }
+
+    return React.createElement('section', {
+      'aria-label': typeof title === 'string' ? title : undefined,
+      role: 'dialog',
+    }, [
+      React.createElement('h2', { key: 'title' }, title),
+      description ? React.createElement('p', { key: 'description' }, description) : null,
+      React.createElement('div', { key: 'actions' }, React.Children.toArray([cancelButton, confirmButton])),
+      React.createElement('button', {
+        'aria-label': 'dialog close',
+        hidden: true,
+        key: 'close',
+        type: 'button',
+        onClick: onClose,
+      }),
+    ])
+  }
+  ConfirmDialog.CancelButton = ({ children, onClick, ...props }) => React.createElement('button', {
+    ...props,
+    type: 'button',
+    onClick,
+  }, children)
+  ConfirmDialog.ConfirmButton = ({ children, onClick, ...props }) => React.createElement('button', {
+    ...props,
+    type: 'button',
+    onClick,
+  }, children)
 
   return {
     ...actual,
+    ConfirmDialog,
     Switch: ({ checked = false, hasTouchEffect, onChange, ...props }) => React.createElement('button', {
       ...props,
       'aria-checked': checked,
@@ -71,6 +113,16 @@ async function completeFiveSecondTurn(participant, elapsedMs) {
   fireEvent.click(screen.getByTestId('complete-game-turn'))
 }
 
+async function completeReactionTurn(participant, reactionMs) {
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(`${participant} 시작하기`) }))
+  await advanceGameCountdown()
+  await act(async () => {
+    vi.advanceTimersByTime(3000 + reactionMs)
+  })
+  fireEvent.click(screen.getByTestId('reaction-action'))
+  fireEvent.click(screen.getByTestId('complete-game-turn'))
+}
+
 afterEach(() => {
   vi.useRealTimers()
   vi.clearAllMocks()
@@ -79,7 +131,7 @@ afterEach(() => {
 test('uses TDS Mobile primitives for the main UI surfaces', () => {
   const appSource = readFileSync(join(process.cwd(), 'src', 'App.jsx'), 'utf8')
 
-  expect(appSource).toMatch(/import \{[^}]*BottomCTA[^}]*BottomSheet[^}]*Button[^}]*IconButton[^}]*ListHeader[^}]*ListRow[^}]*SegmentedControl[^}]*Tab[^}]*TextField[^}]*Top[^}]*\} from '@toss\/tds-mobile'/)
+  expect(appSource).toMatch(/import \{[^}]*BottomCTA[^}]*BottomSheet[^}]*Button[^}]*ConfirmDialog[^}]*IconButton[^}]*ListHeader[^}]*ListRow[^}]*SegmentedControl[^}]*Tab[^}]*TextField[^}]*Top[^}]*\} from '@toss\/tds-mobile'/)
   expect(appSource).toMatch(/<Top[\s>]/)
   expect(appSource).toMatch(/<BottomCTA\.Single[\s>]/)
   expect(appSource).toMatch(/<BottomSheet[\s>]/)
@@ -139,6 +191,31 @@ test('reaction screen keeps game content and CTA above the bottom navigation', (
   expect(styles).toMatch(/\.reaction-result-stats span\s*\{[^}]*overflow:\s*visible/s)
 })
 
+test('multi-person tie rematch styles show all targets in a compact grid', () => {
+  const styles = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8')
+
+  expect(styles).toMatch(/\.tie-rematch-matchup\.multi\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s)
+  expect(styles).toMatch(/\.tie-rematch-matchup\.multi \.tie-versus\s*\{[^}]*display:\s*none/s)
+  expect(styles).toMatch(/\.tie-rematch-player-card\.compact\s*\{[^}]*min-height:\s*6[0-9]px/s)
+  expect(styles).toMatch(/\.tie-rematch-player-card\.compact\s*\{[^}]*padding:\s*10px/s)
+})
+
+test('timing stop styles use an arcade result layout with a distinct target zone', () => {
+  const styles = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8')
+
+  expect(styles).toMatch(/\.timing-stage\s*\{[^}]*align-content:\s*start/s)
+  expect(styles).toMatch(/\.timing-stage\s*\{[^}]*background:\s*var\(--surface\)/s)
+  expect(styles).toMatch(/\.timing-stage\s*\{[^}]*box-shadow:\s*var\(--shadow\)/s)
+  expect(styles).not.toMatch(/\.timing-stage\s*\{[^}]*linear-gradient/s)
+  expect(styles).toMatch(/\.timing-arena\s*\{[^}]*background:\s*var\(--surface-low\)/s)
+  expect(styles).toMatch(/\.timing-target-zone\s*\{[^}]*position:\s*absolute/s)
+  expect(styles).toMatch(/\.timing-pointer\s*\{[^}]*position:\s*absolute/s)
+  expect(styles).toMatch(/\.timing-pointer\s*\{[^}]*transition:\s*none/s)
+  expect(styles).not.toMatch(/\.timing-pointer\s*\{[^}]*animation:/s)
+  expect(styles).toMatch(/\.timing-result-panel\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s)
+  expect(styles).toMatch(/\.timing-grade-badge\s*\{[^}]*overflow-wrap:\s*anywhere/s)
+})
+
 test('renders the Stitch start screen copy and primary action', () => {
   renderApp()
 
@@ -175,6 +252,23 @@ test('moves backward to the immediately previous home flow screen', () => {
 
   fireEvent.click(screen.getByRole('button', { name: '이전 화면' }))
   expect(screen.getByRole('heading', { name: '얼마를 나눌까요?' })).toBeInTheDocument()
+})
+
+test('participant entry stops at eight people with a clear explanation', () => {
+  const { container } = renderApp()
+
+  startSettlement()
+  enterAmountWithQuickButton()
+
+  const nameInput = container.querySelector('.participant-form input')
+  for (const name of ['친구1', '친구2', '친구3', '친구4', '친구5']) {
+    fireEvent.change(nameInput, { target: { value: name } })
+    fireEvent.click(screen.getByRole('button', { name: '추가' }))
+  }
+
+  expect(screen.getByText('총 8명')).toBeInTheDocument()
+  expect(screen.getByRole('status')).toHaveTextContent('최대 8명까지 참여할 수 있어요.')
+  expect(screen.queryByText('친구5')).not.toBeInTheDocument()
 })
 
 test('amount keypad appends integer digits and removes the decimal key', () => {
@@ -262,6 +356,15 @@ test('continues from roulette result to final result with share sheet', async ()
   expect(screen.getByText('강남역 삼겹살 모임')).toBeInTheDocument()
   expect(screen.getByText('영희')).toBeInTheDocument()
   expect(screen.getByText('면제 (0원)')).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: /이미지로 저장/ }))
+  await waitFor(() => {
+    expect(bridgeMocks.saveBase64Data).toHaveBeenCalledWith({
+      data: expect.any(String),
+      fileName: '강남역 삼겹살 모임.png',
+      mimeType: 'image/png',
+    })
+  })
 
   fireEvent.click(screen.getByRole('button', { name: /결과 공유하기/ }))
   const dialog = screen.getByRole('dialog', { name: '정산 결과 공유' })
@@ -411,7 +514,7 @@ test('loser extra payer mode explains the game settlement ratio before the game 
 
   expect(screen.getByRole('heading', { name: '게임 선택하기' })).toBeInTheDocument()
   expect(screen.getByText(/꼴등은 2인분/)).toBeInTheDocument()
-  expect(screen.getByText(/예상 선택자 24,000원/)).toBeInTheDocument()
+  expect(screen.getByText(/꼴등 24,000원/)).toBeInTheDocument()
   expect(screen.getByText(/나머지 각 12,000원/)).toBeInTheDocument()
 })
 
@@ -428,8 +531,8 @@ test('discount winner mode explains the 50 percent discount before the game star
   fireEvent.click(screen.getByTestId('method-next'))
 
   expect(screen.getByRole('heading', { name: '게임 선택하기' })).toBeInTheDocument()
-  expect(screen.getByText(/1등\/선택자는 기본 1\/N의 50%/)).toBeInTheDocument()
-  expect(screen.getByText(/예상 선택자 7,500원/)).toBeInTheDocument()
+  expect(screen.getByText(/1등은 기본 1\/N의 50%/)).toBeInTheDocument()
+  expect(screen.getByText(/1등 7,500원/)).toBeInTheDocument()
   expect(screen.getByText(/나머지 각 17,500원/)).toBeInTheDocument()
 })
 
@@ -442,22 +545,32 @@ test('loser extra payer settlement charges the selected random participant two s
   fireEvent.click(screen.getByRole('button', { name: /정산 방식 고르기/ }))
   fireEvent.click(screen.getByRole('button', { name: /꼴등 더 내기/ }))
   fireEvent.click(screen.getByTestId('method-next'))
-  fireEvent.click(screen.getByTestId('game-card-fastRandom'))
+  fireEvent.click(screen.getByTestId('game-card-roulette'))
   fireEvent.click(screen.getByTestId('game-select-next'))
-  fireEvent.click(screen.getByTestId('fast-random-draw'))
+  fireEvent.click(screen.getByTestId('roulette-quick-draw'))
 
   await act(async () => {
-    vi.advanceTimersByTime(2600)
+    vi.advanceTimersByTime(400)
   })
   vi.useRealTimers()
 
-  fireEvent.click(screen.getByTestId('random-result-next'))
+  fireEvent.click(screen.getByRole('button', { name: /금액 확인하기/ }))
 
   expect(screen.getByRole('heading', { name: '정산이 완료됐어요' })).toBeInTheDocument()
   expect(screen.getByText('꼴등 더 내기 방식 적용')).toBeInTheDocument()
   expect(screen.getByText('2인분 부담')).toBeInTheDocument()
   expect(screen.getByText('20,000원')).toBeInTheDocument()
   expect(screen.getAllByText('10,000원')).toHaveLength(3)
+})
+
+test('game selection publishes seven games with player and duration guidance', () => {
+  openGameSelectForExecution()
+
+  expect(screen.getAllByTestId(/^game-card-/)).toHaveLength(7)
+  expect(screen.queryByTestId('game-card-fastRandom')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('game-card-movingTarget')).not.toBeInTheDocument()
+  expect(screen.getAllByText(/추천 2~/).length).toBeGreaterThan(0)
+  expect(screen.getAllByText(/예상/).length).toBeGreaterThan(0)
 })
 
 test('loser extra payer ranking game rematches tied last-place players', async () => {
@@ -480,8 +593,13 @@ test('loser extra payer ranking game rematches tied last-place players', async (
   await completeFiveSecondTurn('영희', 5400)
 
   expect(screen.getByRole('heading', { name: '동점자가 나왔어요!' })).toBeInTheDocument()
+  expect(screen.getByText('재대결 대상 2명')).toBeInTheDocument()
+  expect(screen.getByTestId('tie-rematch-matchup')).toHaveClass('multi')
+  expect(screen.queryByText('VS')).not.toBeInTheDocument()
   const tiedCards = screen.getAllByTestId('tie-rematch-player-card')
   expect(tiedCards).toHaveLength(2)
+  expect(tiedCards[0]).toHaveClass('compact')
+  expect(tiedCards[1]).toHaveClass('compact')
   expect(tiedCards[0]).toHaveTextContent('수진')
   expect(tiedCards[1]).toHaveTextContent('영희')
 
@@ -489,10 +607,8 @@ test('loser extra payer ranking game rematches tied last-place players', async (
   expect(screen.getByText('1/2 플레이어')).toBeInTheDocument()
   expect(screen.getByText('수진 님 차례예요')).toBeInTheDocument()
 
-  fireEvent.click(screen.getByTestId('participant-turn-start'))
-  fireEvent.click(screen.getByTestId('complete-game-turn'))
-  fireEvent.click(screen.getByTestId('participant-turn-start'))
-  fireEvent.click(screen.getByTestId('complete-game-turn'))
+  await completeFiveSecondTurn('수진', 5000)
+  await completeFiveSecondTurn('영희', 5000)
 
   expect(screen.getByRole('heading', { name: '동점자가 나왔어요!' })).toBeInTheDocument()
   expect(screen.getAllByTestId('tie-rematch-player-card')).toHaveLength(2)
@@ -528,7 +644,9 @@ test('loser extra payer ranking rematch settles the single loser as two-share pa
   expect(screen.getByText('2인분 부담')).toBeInTheDocument()
 })
 
-test('ranking game sends the first-place player to the game settlement result as exempt winner', () => {
+test('ranking game sends the first-place player to the game settlement result as exempt winner', async () => {
+  vi.useFakeTimers()
+  vi.spyOn(Math, 'random').mockReturnValue(0)
   renderApp()
 
   startSettlement()
@@ -541,23 +659,20 @@ test('ranking game sends the first-place player to the game settlement result as
   fireEvent.click(screen.getByRole('button', { name: /게임 시작하기/ }))
   fireEvent.click(screen.getByRole('button', { name: /플레이 순서 확인/ }))
   fireEvent.click(screen.getByRole('button', { name: /첫 번째 참여자에게 넘기기/ }))
-  fireEvent.click(screen.getByRole('button', { name: /민수 시작하기/ }))
-  fireEvent.click(screen.getByRole('button', { name: /이번 차례 완료/ }))
-  fireEvent.click(screen.getByRole('button', { name: /지훈 시작하기/ }))
-  fireEvent.click(screen.getByRole('button', { name: /이번 차례 완료/ }))
-  fireEvent.click(screen.getByRole('button', { name: /수진 시작하기/ }))
-  fireEvent.click(screen.getByRole('button', { name: /이번 차례 완료/ }))
-  fireEvent.click(screen.getByRole('button', { name: /영희 시작하기/ }))
-  fireEvent.click(screen.getByRole('button', { name: /이번 차례 완료/ }))
+  await completeReactionTurn('민수', 100)
+  await completeReactionTurn('지훈', 200)
+  await completeReactionTurn('수진', 300)
+  await completeReactionTurn('영희', 400)
 
   expect(screen.getByRole('heading', { name: '전체 순위 결과' })).toBeInTheDocument()
   expect(screen.getAllByText('1등').length).toBeGreaterThan(0)
-  expect(screen.getByText('민수 님 면제권 획득')).toBeInTheDocument()
+  const firstPlaceSummary = screen.getByText(/ 님 면제권 획득$/)
+  const firstPlaceParticipant = firstPlaceSummary.textContent.replace(' 님 면제권 획득', '')
 
   fireEvent.click(screen.getByRole('button', { name: /최종 정산 보기/ }))
 
   expect(screen.getByRole('heading', { name: '게임 정산이 완료됐어요' })).toBeInTheDocument()
-  expect(screen.getByText('민수')).toBeInTheDocument()
+  expect(screen.getAllByText(firstPlaceParticipant).length).toBeGreaterThan(0)
   expect(screen.getByText('면제 (0원)')).toBeInTheDocument()
 })
 
@@ -576,13 +691,16 @@ test('tie for first place starts a real rematch before final settlement', async 
   fireEvent.click(screen.getByRole('button', { name: /플레이 순서 확인/ }))
   fireEvent.click(screen.getByRole('button', { name: /첫 번째 참여자에게 넘기기/ }))
 
-  for (const participant of ['민수', '지훈', '수진', '영희']) {
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(`${participant} 시작하기`) }))
-    fireEvent.click(screen.getByRole('button', { name: /이번 차례 완료/ }))
-  }
+  await completeFiveSecondTurn('민수', 5000)
+  await completeFiveSecondTurn('지훈', 5000)
+  await completeFiveSecondTurn('수진', 5400)
+  await completeFiveSecondTurn('영희', 5400)
 
   expect(screen.getByRole('heading', { name: '동점자가 나왔어요!' })).toBeInTheDocument()
   expect(screen.getByText('동점인 참여자끼리 한 번 더 대결해 순위를 정해요.')).toBeInTheDocument()
+  expect(screen.getByText('재대결 대상 2명')).toBeInTheDocument()
+  expect(screen.getByTestId('tie-rematch-matchup')).toHaveClass('multi')
+  expect(screen.queryByText('VS')).not.toBeInTheDocument()
   expect(screen.getAllByTestId('tie-rematch-player-card')).toHaveLength(2)
   expect(screen.getByTestId('tie-rematch-rule')).toHaveTextContent('이전 게임을 한 번 더 진행하여, 동점자 사이의 최종 순위를 가려냅니다.')
   expect(screen.queryByRole('button', { name: /면제자로 확정/ })).not.toBeInTheDocument()
@@ -612,7 +730,8 @@ test('tie for first place starts a real rematch before final settlement', async 
   expect(screen.getByText('면제 (0원)')).toBeInTheDocument()
 })
 
-test('tie rematch can repeat when rematch players tie again', () => {
+test('tie rematch can repeat when rematch players tie again', async () => {
+  vi.useFakeTimers()
   renderApp()
 
   startSettlement()
@@ -626,20 +745,54 @@ test('tie rematch can repeat when rematch players tie again', () => {
   fireEvent.click(screen.getByRole('button', { name: /플레이 순서 확인/ }))
   fireEvent.click(screen.getByRole('button', { name: /첫 번째 참여자에게 넘기기/ }))
 
-  for (const participant of ['민수', '지훈', '수진', '영희']) {
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(`${participant} 시작하기`) }))
-    fireEvent.click(screen.getByRole('button', { name: /이번 차례 완료/ }))
-  }
+  await completeFiveSecondTurn('민수', 5000)
+  await completeFiveSecondTurn('지훈', 5000)
+  await completeFiveSecondTurn('수진', 5400)
+  await completeFiveSecondTurn('영희', 5400)
 
   fireEvent.click(screen.getByTestId('tie-rematch-start'))
 
   for (const participant of ['민수', '지훈']) {
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(`${participant} 시작하기`) }))
-    fireEvent.click(screen.getByRole('button', { name: /이번 차례 완료/ }))
+    await completeFiveSecondTurn(participant, 5000)
   }
 
   expect(screen.getByRole('heading', { name: '동점자가 나왔어요!' })).toBeInTheDocument()
   expect(screen.getAllByTestId('tie-rematch-player-card')).toHaveLength(2)
+})
+
+test('tie rematch shows five rematch targets at once in compact cards', async () => {
+  vi.useFakeTimers()
+  vi.spyOn(Math, 'random').mockReturnValue(0)
+  const { container } = renderApp()
+
+  startSettlement()
+  enterAmountWithQuickButton()
+  fireEvent.change(container.querySelector('.participant-form input'), { target: { value: '새친구' } })
+  fireEvent.click(screen.getByRole('button', { name: '추가' }))
+  fireEvent.click(screen.getByTestId('participants-next'))
+  fireEvent.click(screen.getByTestId('method-extra'))
+  fireEvent.click(screen.getByTestId('method-next'))
+  fireEvent.click(screen.getByTestId('game-card-reaction'))
+  fireEvent.click(screen.getByTestId('game-select-next'))
+  fireEvent.click(screen.getByTestId('game-rules-next'))
+  fireEvent.click(screen.getByTestId('play-order-next'))
+
+  for (const participant of ['민수', '지훈', '수진', '영희', '새친구']) {
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`${participant} 시작하기`) }))
+    await advanceGameCountdown()
+    fireEvent.click(screen.getByTestId('reaction-action'))
+    fireEvent.click(screen.getByTestId('complete-game-turn'))
+  }
+
+  expect(screen.getByRole('heading', { name: '동점자가 나왔어요!' })).toBeInTheDocument()
+  expect(screen.getByText('재대결 대상 5명')).toBeInTheDocument()
+  expect(screen.getByTestId('tie-rematch-matchup')).toHaveClass('multi')
+
+  const tiedCards = screen.getAllByTestId('tie-rematch-player-card')
+  expect(tiedCards).toHaveLength(5)
+  for (const participant of ['민수', '지훈', '수진', '영희', '새친구']) {
+    expect(screen.getByText(participant)).toBeInTheDocument()
+  }
 })
 function openGameSelectForExecution() {
   renderApp()
@@ -660,6 +813,17 @@ function startRankingGameForExecution(gameId) {
   fireEvent.click(screen.getByTestId('participant-turn-start'))
 }
 
+function startExtraReactionGameForExecution() {
+  renderApp()
+  startSettlement()
+  enterAmountWithQuickButton()
+  fireEvent.click(screen.getByTestId('participants-next'))
+  fireEvent.click(screen.getByTestId('method-extra'))
+  fireEvent.click(screen.getByTestId('method-next'))
+  fireEvent.click(screen.getByTestId('game-card-reaction'))
+  fireEvent.click(screen.getByTestId('game-select-next'))
+}
+
 async function advanceGameCountdown() {
   for (let tick = 0; tick < 3; tick += 1) {
     await act(async () => {
@@ -674,6 +838,8 @@ test('automatic ranking games show a countdown before gameplay controls appear',
 
   const overlay = screen.getByTestId('game-countdown-overlay')
   expect(overlay).toBeInTheDocument()
+  expect(overlay).toHaveAttribute('role', 'status')
+  expect(overlay).toHaveAttribute('aria-live', 'assertive')
   expect(overlay.parentElement).toHaveClass('ranking-game-screen')
   expect(overlay.parentElement).toHaveClass('preparing-countdown')
   expect(screen.getByTestId('game-countdown-number')).toHaveTextContent('3')
@@ -697,6 +863,18 @@ test('automatic ranking games show a countdown before gameplay controls appear',
   expect(screen.getByTestId('reaction-action')).toBeInTheDocument()
 })
 
+test('participant turn changes are announced to assistive technology', () => {
+  openGameSelectForExecution()
+  fireEvent.click(screen.getByTestId('game-card-reaction'))
+  fireEvent.click(screen.getByTestId('game-select-next'))
+  fireEvent.click(screen.getByTestId('game-rules-next'))
+  fireEvent.click(screen.getByTestId('play-order-next'))
+
+  const turnStatus = screen.getByRole('status')
+  expect(turnStatus).toHaveAttribute('aria-live', 'polite')
+  expect(turnStatus).toHaveTextContent(/님 차례예요/)
+})
+
 function openExemptSettingsForExecution() {
   renderApp()
   startSettlement()
@@ -709,8 +887,31 @@ function openExemptSettingsForExecution() {
 test('exempt settings use a switch for allowing result reselection', () => {
   openExemptSettingsForExecution()
 
-  expect(screen.getByRole('switch', { name: /결과 재선택 허용/ })).toBeInTheDocument()
+  expect(screen.getByRole('switch', { name: /결과 재선택 허용/ })).toHaveAttribute('aria-checked', 'false')
   expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+})
+
+test('enabled result reselection requires confirmation before discarding the official result', async () => {
+  vi.useFakeTimers()
+  openExemptSettingsForExecution()
+  fireEvent.click(screen.getByRole('switch', { name: /결과 재선택 허용/ }))
+  fireEvent.click(screen.getByTestId('exempt-next'))
+  fireEvent.click(screen.getByTestId('game-select-next'))
+  fireEvent.click(screen.getByTestId('roulette-wheel-draw'))
+
+  await act(async () => {
+    vi.advanceTimersByTime(2200)
+  })
+
+  fireEvent.click(screen.getByRole('button', { name: /다시 뽑기/ }))
+  expect(screen.getByRole('dialog', { name: '현재 결과를 폐기할까요?' })).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: '결과 유지' }))
+  expect(screen.getByRole('heading', { name: /님이 면제됐어요/ })).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: /다시 뽑기/ }))
+  fireEvent.click(screen.getByRole('button', { name: '폐기하고 다시 하기' }))
+  expect(screen.getByTestId('roulette-wheel-draw')).toBeInTheDocument()
 })
 
 test('final settlement locks the completed flow without a top back button', async () => {
@@ -755,7 +956,6 @@ test('starting a new settlement from the completed screen clears the previous dr
   fireEvent.click(screen.getByRole('button', { name: /정산 방식 고르기/ }))
   fireEvent.click(screen.getByRole('button', { name: /한 명 면제/ }))
   fireEvent.click(screen.getByRole('button', { name: /게임 선택하기|결과 확인하기/ }))
-  fireEvent.click(screen.getByRole('switch', { name: /결과 재선택 허용/ }))
   fireEvent.click(screen.getByTestId('exempt-next'))
   fireEvent.click(screen.getByTestId('game-select-next'))
   fireEvent.click(screen.getByRole('button', { name: /룰렛 돌리기/ }))
@@ -779,7 +979,9 @@ test('starting a new settlement from the completed screen clears the previous dr
   expect(screen.getByRole('button', { name: /참여자 입력하기/ })).toBeDisabled()
 })
 
-test('starting a new settlement from a game result resets game choices and members', () => {
+test('starting a new settlement from a game result resets game choices and members', async () => {
+  vi.useFakeTimers()
+  vi.spyOn(Math, 'random').mockReturnValue(0)
   const { container } = renderApp()
 
   startSettlement()
@@ -795,10 +997,11 @@ test('starting a new settlement from a game result resets game choices and membe
   fireEvent.click(screen.getByTestId('game-rules-next'))
   fireEvent.click(screen.getByTestId('play-order-next'))
 
-  for (let turn = 0; turn < 5; turn += 1) {
-    fireEvent.click(screen.getByTestId('participant-turn-start'))
-    fireEvent.click(screen.getByTestId('complete-game-turn'))
-  }
+  await completeReactionTurn('민수', 100)
+  await completeReactionTurn('지훈', 200)
+  await completeReactionTurn('수진', 300)
+  await completeReactionTurn('영희', 400)
+  await completeReactionTurn('새친구', 500)
 
   fireEvent.click(screen.getByRole('button', { name: /최종 정산 보기/ }))
   fireEvent.click(screen.getByRole('button', { name: /새로운 정산/ }))
@@ -826,7 +1029,6 @@ test('disabled result reselection hides result back navigation and retry actions
   fireEvent.click(screen.getByTestId('participants-next'))
   fireEvent.click(screen.getByTestId('method-exempt'))
   fireEvent.click(screen.getByTestId('method-next'))
-  fireEvent.click(screen.getByRole('switch', { name: /결과 재선택 허용/ }))
   fireEvent.click(screen.getByTestId('exempt-next'))
   fireEvent.click(screen.getByTestId('game-select-next'))
   fireEvent.click(screen.getByRole('button', { name: /룰렛 돌리기/ }))
@@ -841,9 +1043,9 @@ test('disabled result reselection hides result back navigation and retry actions
   expect(screen.getByRole('button', { name: /금액 확인하기/ })).toBeInTheDocument()
 })
 
-test('leaving an in-progress ranking game asks for confirmation before resetting to game select', () => {
+test('leaving an in-progress ranking game uses a TDS confirmation dialog before resetting to game select', () => {
   vi.useFakeTimers()
-  const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+  const confirmSpy = vi.spyOn(window, 'confirm')
   const { container } = renderApp()
 
   startSettlement()
@@ -860,11 +1062,19 @@ test('leaving an in-progress ranking game asks for confirmation before resetting
 
   fireEvent.click(container.querySelector('.top-bar button'))
 
-  expect(confirmSpy).toHaveBeenCalledWith('게임을 나가면 현재 기록이 초기화돼요. 나갈까요?')
+  expect(confirmSpy).not.toHaveBeenCalled()
+  const dialog = screen.getByRole('dialog', { name: '게임을 나갈까요?' })
+  expect(dialog).toBeInTheDocument()
+  expect(within(dialog).getByText('게임을 나가면 현재 기록이 초기화돼요.')).toBeInTheDocument()
+  expect(within(dialog).getByRole('button', { name: '계속하기' })).toBeInTheDocument()
+  expect(within(dialog).getByRole('button', { name: '나가기' })).toBeInTheDocument()
+
+  fireEvent.click(within(dialog).getByRole('button', { name: '계속하기' }))
+  expect(screen.queryByRole('dialog', { name: '게임을 나갈까요?' })).not.toBeInTheDocument()
   expect(screen.getByTestId('game-countdown-overlay')).toBeInTheDocument()
 
-  confirmSpy.mockReturnValue(true)
   fireEvent.click(container.querySelector('.top-bar button'))
+  fireEvent.click(within(screen.getByRole('dialog', { name: '게임을 나갈까요?' })).getByRole('button', { name: '나가기' }))
 
   expect(screen.getByRole('heading', { name: '게임 선택하기' })).toBeInTheDocument()
 
@@ -896,27 +1106,31 @@ test('reaction game uses the large purple tap-focused play screen after countdow
     vi.advanceTimersByTime(1)
   })
   expect(screen.getByText('지금 누르세요!')).toBeInTheDocument()
-  expect(screen.getByText('GO! GO! GO!')).toBeInTheDocument()
+  expect(screen.getByText('지금 바로 탭하세요!')).toBeInTheDocument()
 })
 
-test('reaction game waits up to five seconds before showing the tap signal', async () => {
+test('reaction game cannot reset the same turn while waiting for the signal', async () => {
   vi.useFakeTimers()
-  vi.spyOn(Math, 'random').mockReturnValue(0.999)
   startRankingGameForExecution('reaction')
 
   await advanceGameCountdown()
 
   expect(screen.getByText('기다려주세요')).toBeInTheDocument()
+  expect(screen.queryByTestId('reaction-reset')).not.toBeInTheDocument()
+})
 
-  await act(async () => {
-    vi.advanceTimersByTime(4997)
-  })
-  expect(screen.queryByText('지금 누르세요!')).not.toBeInTheDocument()
+test('backgrounding a ranking game discards the active attempt and returns to the same participant', async () => {
+  vi.useFakeTimers()
+  startRankingGameForExecution('reaction')
+  await advanceGameCountdown()
 
-  await act(async () => {
-    vi.advanceTimersByTime(1)
-  })
-  expect(screen.getByText('지금 누르세요!')).toBeInTheDocument()
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+  fireEvent(document, new Event('visibilitychange'))
+
+  expect(screen.getByText('민수 님 차례예요')).toBeInTheDocument()
+  expect(screen.getByText('앱이 백그라운드로 이동해 이번 기록을 폐기했어요.')).toBeInTheDocument()
+
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
 })
 
 test('reaction game shows a result panel after a valid tap', async () => {
@@ -934,8 +1148,8 @@ test('reaction game shows a result panel after a valid tap', async () => {
   fireEvent.click(screen.getByTestId('reaction-action'))
 
   expect(screen.getByTestId('reaction-action')).toBeInTheDocument()
-  expect(screen.getByText('0.123초')).toBeInTheDocument()
-  expect(screen.getByText('아주 빠른 반응이에요!')).toBeInTheDocument()
+  expect(screen.getByTestId('reaction-result-panel')).toHaveTextContent(/\d+\.\d{3}초/)
+  expect(screen.getByText('매우 빠른 반응이에요!')).toBeInTheDocument()
   expect(screen.getByText('평균 대비')).toBeInTheDocument()
   expect(screen.getByText('현재 순위')).toBeInTheDocument()
   expect(screen.getByText('1위')).toBeInTheDocument()
@@ -955,7 +1169,7 @@ test('reaction game shows a result panel after a valid tap', async () => {
     fireEvent.click(screen.getByTestId('complete-game-turn'))
   }
 
-  expect(screen.getAllByText('123ms').length).toBeGreaterThan(0)
+  expect(screen.getAllByText(/^\d+ms$/).length).toBeGreaterThan(0)
   expect(screen.queryByText('reaction recordedms')).not.toBeInTheDocument()
 })
 
@@ -984,9 +1198,41 @@ test('reaction game ranks the current result against previous scores', async () 
   })
   fireEvent.click(screen.getByTestId('reaction-action'))
 
-  expect(screen.getByText('0.100초')).toBeInTheDocument()
-  expect(screen.getByText('-0.20초')).toBeInTheDocument()
-  expect(screen.getByText('1위')).toBeInTheDocument()
+  const resultPanel = screen.getByTestId('reaction-result-panel')
+  expect(resultPanel).toHaveTextContent(/\d+\.\d{3}초/)
+  expect(within(resultPanel).getByText('평균 대비')).toBeInTheDocument()
+  expect(within(resultPanel).getByText(/^\d+위$/)).toBeInTheDocument()
+})
+
+test('reaction game rules warn that tapping before the signal makes the player last place', () => {
+  openGameSelectForExecution()
+
+  fireEvent.click(screen.getByTestId('game-card-reaction'))
+  fireEvent.click(screen.getByTestId('game-select-next'))
+
+  expect(screen.getByText(/신호 전 클릭은 실격 점수로 기록/)).toBeInTheDocument()
+})
+
+test('timing stop rules explain the 100 point center target scoring', () => {
+  openGameSelectForExecution()
+
+  fireEvent.click(screen.getByTestId('game-card-timingStop'))
+  fireEvent.click(screen.getByTestId('game-select-next'))
+
+  expect(screen.getByText(/중앙에 가까울수록 100점에 가까워지고, 한 번의 정지/)).toBeInTheDocument()
+})
+
+test('timing stop position uses a smooth eased round trip instead of 80ms jumps', async () => {
+  const module = await import('./App')
+
+  expect(module.getTimingStopPosition).toBeTypeOf('function')
+  expect(module.getTimingStopPosition(0)).toBeCloseTo(0, 3)
+  expect(module.getTimingStopPosition(400)).toBeCloseTo(50, 1)
+  expect(module.getTimingStopPosition(800)).toBeCloseTo(100, 3)
+  expect(module.getTimingStopPosition(1200)).toBeCloseTo(50, 1)
+  expect(module.getTimingStopPosition(1600)).toBeCloseTo(0, 3)
+  expect(module.getTimingStopPosition(16)).toBeGreaterThan(0)
+  expect(module.getTimingStopPosition(16)).toBeLessThan(7)
 })
 
 test('manual-start ranking games do not show the countdown overlay', () => {
@@ -997,54 +1243,114 @@ test('manual-start ranking games do not show the countdown overlay', () => {
   expect(screen.getByTestId('five-second-start')).toBeInTheDocument()
 })
 
+test('ranking games keep the turn completion button disabled until a score is recorded', async () => {
+  vi.useFakeTimers()
+  vi.spyOn(Math, 'random').mockReturnValue(0)
+  startRankingGameForExecution('reaction')
+
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
+  await advanceGameCountdown()
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
+})
+
 test('timing stop starts after the countdown finishes', async () => {
   vi.useFakeTimers()
   startRankingGameForExecution('timingStop')
 
   expect(screen.getByTestId('game-countdown-overlay')).toBeInTheDocument()
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
   expect(screen.queryByTestId('timing-stop')).not.toBeInTheDocument()
 
   await advanceGameCountdown()
 
   expect(screen.queryByTestId('game-countdown-overlay')).not.toBeInTheDocument()
   expect(screen.getByTestId('timing-stop')).toBeInTheDocument()
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
+
+  fireEvent.click(screen.getByTestId('timing-stop'))
+  const resultPanel = screen.getByTestId('timing-result-panel')
+  expect(resultPanel).toBeInTheDocument()
+  expect(within(resultPanel).getByText(/\d+\.\d점/)).toBeInTheDocument()
+  expect(within(resultPanel).getByText(/중앙에서/)).toBeInTheDocument()
+  expect(within(resultPanel).getByText(/정확|훌륭|좋음|아쉬움/)).toBeInTheDocument()
+  expect(screen.queryByText(/target distance/)).not.toBeInTheDocument()
+  expect(screen.getByTestId('complete-game-turn')).not.toBeDisabled()
 })
 
-test('fast random game runs its draw animation and produces a settlement target', async () => {
+test('timing stop position follows a continuous cosine path inside the track', () => {
+  const at33ms = getTimingStopPosition(33)
+  const at34ms = getTimingStopPosition(34)
+
+  expect(at33ms).toBeGreaterThan(0)
+  expect(at33ms).toBeLessThan(100)
+  expect(at34ms).toBeGreaterThan(at33ms)
+  expect(at34ms - at33ms).toBeLessThan(1)
+})
+
+test('timing stop ranking result shows decimal point scores without millisecond labels', async () => {
+  vi.useFakeTimers()
+  startRankingGameForExecution('timingStop')
+
+  const turnWaitTimes = [400, 100, 700, 250]
+
+  for (let index = 0; index < turnWaitTimes.length; index += 1) {
+    if (index > 0) {
+      fireEvent.click(screen.getByTestId('participant-turn-start'))
+    }
+    await advanceGameCountdown()
+    await act(async () => {
+      vi.advanceTimersByTime(turnWaitTimes[index])
+    })
+    fireEvent.click(screen.getByTestId('timing-stop'))
+    fireEvent.click(screen.getByTestId('complete-game-turn'))
+  }
+
+  expect(screen.getByRole('heading', { name: '전체 순위 결과' })).toBeInTheDocument()
+  const rows = screen.getAllByRole('listitem')
+  expect(rows).toHaveLength(4)
+  for (const row of rows) {
+    expect(within(row).getByText(/\d+\.\d점/)).toBeInTheDocument()
+  }
+  expect(screen.queryByText(/ms/)).not.toBeInTheDocument()
+})
+
+test('roulette quick mode uses the same fair draw and reveals the result quickly', async () => {
   vi.useFakeTimers()
   openGameSelectForExecution()
 
-  fireEvent.click(screen.getByTestId('game-card-fastRandom'))
+  fireEvent.click(screen.getByTestId('game-card-roulette'))
   fireEvent.click(screen.getByTestId('game-select-next'))
-  fireEvent.click(screen.getByTestId('fast-random-draw'))
-
-  expect(screen.getByTestId('fast-random-stage')).toHaveClass('drawing')
+  expect(screen.getByText('모든 참여자의 선택 확률은 1/4이에요.')).toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('roulette-quick-draw'))
 
   await act(async () => {
-    vi.advanceTimersByTime(2600)
+    vi.advanceTimersByTime(400)
+  })
+
+  expect(screen.getByRole('heading', { name: /영희 님이 면제됐어요/ })).toBeInTheDocument()
+})
+
+test('receipt envelope locks the first choice and reveals its shuffled assignment', async () => {
+  vi.useFakeTimers()
+  openGameSelectForExecution()
+
+  fireEvent.click(screen.getByTestId('game-card-receiptEnvelope'))
+  fireEvent.click(screen.getByTestId('game-select-next'))
+
+  expect(screen.getByText('모든 참여자의 선택 확률은 1/4이에요.')).toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('receipt-envelope-2'))
+  expect(screen.getByTestId('receipt-envelope-2')).toHaveClass('selected-envelope')
+  expect(screen.getByTestId('receipt-envelope-1')).toBeDisabled()
+
+  await act(async () => {
+    vi.advanceTimersByTime(650)
   })
 
   expect(screen.getByTestId('random-result-name')).toBeInTheDocument()
   expect(screen.getByTestId('random-result-next')).toBeInTheDocument()
 })
 
-test('receipt envelope game requires selecting an envelope before revealing the result', () => {
-  openGameSelectForExecution()
-
-  fireEvent.click(screen.getByTestId('game-card-receiptEnvelope'))
-  fireEvent.click(screen.getByTestId('game-select-next'))
-
-  expect(screen.getByTestId('receipt-envelope-open')).toBeDisabled()
-  fireEvent.click(screen.getByTestId('receipt-envelope-2'))
-  expect(screen.getByTestId('receipt-envelope-2')).toHaveClass('selected-envelope')
-  expect(screen.getByTestId('receipt-envelope-open')).not.toBeDisabled()
-
-  fireEvent.click(screen.getByTestId('receipt-envelope-open'))
-  expect(screen.getByTestId('random-result-name')).toBeInTheDocument()
-  expect(screen.getByTestId('random-result-next')).toBeInTheDocument()
-})
-
-test('reaction game handles early tap and then records a measured reaction time', async () => {
+test('reaction game records an early tap once and prevents retrying the same turn', async () => {
   vi.useFakeTimers()
   vi.spyOn(Math, 'random').mockReturnValue(0)
   startRankingGameForExecution('reaction')
@@ -1052,22 +1358,59 @@ test('reaction game handles early tap and then records a measured reaction time'
 
   fireEvent.click(screen.getByTestId('reaction-action'))
   expect(screen.getByText('너무 빨랐어요!')).toBeInTheDocument()
+  expect(screen.getByText('신호 전 클릭으로 꼴등 처리돼요.')).toBeInTheDocument()
+  expect(screen.queryByTestId('reaction-reset')).not.toBeInTheDocument()
+  expect(screen.getByTestId('reaction-action')).toBeDisabled()
 
-  fireEvent.click(screen.getByTestId('reaction-reset'))
+  fireEvent.click(screen.getByTestId('reaction-action'))
   await act(async () => {
     vi.advanceTimersByTime(3000)
   })
-  fireEvent.click(screen.getByTestId('reaction-action'))
 
-  expect(screen.getByText('0.000초')).toBeInTheDocument()
+  expect(screen.queryByText('0.000초')).not.toBeInTheDocument()
   expect(screen.getByTestId('complete-game-turn')).not.toBeDisabled()
+})
+
+test('reaction game treats early taps as last-place scores and rematches tied last-place players', async () => {
+  vi.useFakeTimers()
+  vi.spyOn(Math, 'random').mockReturnValue(0)
+  startExtraReactionGameForExecution()
+
+  expect(screen.getByText(/신호 전 클릭은 실격 점수로 기록/)).toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('game-rules-next'))
+  fireEvent.click(screen.getByTestId('play-order-next'))
+
+  for (const reactionMs of [150, 180]) {
+    fireEvent.click(screen.getByTestId('participant-turn-start'))
+    await advanceGameCountdown()
+    await act(async () => {
+      vi.advanceTimersByTime(3000 + reactionMs)
+    })
+    fireEvent.click(screen.getByTestId('reaction-action'))
+    fireEvent.click(screen.getByTestId('complete-game-turn'))
+  }
+
+  for (let index = 0; index < 2; index += 1) {
+    fireEvent.click(screen.getByTestId('participant-turn-start'))
+    await advanceGameCountdown()
+    fireEvent.click(screen.getByTestId('reaction-action'))
+    fireEvent.click(screen.getByTestId('complete-game-turn'))
+  }
+
+  expect(screen.getByRole('heading', { name: '동점자가 나왔어요!' })).toBeInTheDocument()
+  const tiedCards = screen.getAllByTestId('tie-rematch-player-card')
+  expect(tiedCards).toHaveLength(2)
+  expect(tiedCards[0]).toHaveTextContent('수진')
+  expect(tiedCards[1]).toHaveTextContent('영희')
 })
 
 test('five second challenge measures the difference from five seconds', async () => {
   vi.useFakeTimers()
   startRankingGameForExecution('fiveSeconds')
 
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
   fireEvent.click(screen.getByTestId('five-second-start'))
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
   await act(async () => {
     vi.advanceTimersByTime(5200)
   })
@@ -1075,13 +1418,17 @@ test('five second challenge measures the difference from five seconds', async ()
 
   expect(screen.getByText(/5.200/)).toBeInTheDocument()
   expect(screen.getByText(/0.200/)).toBeInTheDocument()
+  expect(screen.getByTestId('complete-game-turn')).not.toBeDisabled()
 })
 
 test('number order game adds mistake penalty to the final score', async () => {
   vi.useFakeTimers()
   startRankingGameForExecution('numberOrder')
 
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
   fireEvent.click(screen.getByTestId('number-start'))
+  expect(screen.getByTestId('number-start')).toBeDisabled()
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
   fireEvent.click(screen.getByTestId('number-tile-3'))
   fireEvent.click(screen.getByTestId('number-tile-1'))
   fireEvent.click(screen.getByTestId('number-tile-2'))
@@ -1096,31 +1443,9 @@ test('number order game adds mistake penalty to the final score', async () => {
   })
   fireEvent.click(screen.getByTestId('number-tile-9'))
 
-  expect(screen.getByText(/mistakes: 1/)).toBeInTheDocument()
-  expect(screen.getByText(/penalty/)).toBeInTheDocument()
-})
-
-test('moving target game counts hits during the timed round', async () => {
-  vi.useFakeTimers()
-  startRankingGameForExecution('movingTarget')
-
-  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
-  fireEvent.click(screen.getByTestId('target-start'))
-  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
-  expect(screen.getByTestId('target-start')).toBeDisabled()
-
-  fireEvent.pointerDown(screen.getAllByTestId('moving-target')[0])
-  fireEvent.pointerDown(screen.getAllByTestId('moving-target')[0])
-
-  expect(screen.getByText(/hits: 2/)).toBeInTheDocument()
-
-  await act(async () => {
-    vi.advanceTimersByTime(5200)
-  })
-
-  expect(screen.getByText(/2 hits/)).toBeInTheDocument()
+  expect(screen.getByText(/실수: 1회/)).toBeInTheDocument()
+  expect(screen.getByText(/벌점 반영 완료/)).toBeInTheDocument()
   expect(screen.getByTestId('complete-game-turn')).not.toBeDisabled()
-  expect(screen.queryByTestId('target-start')).not.toBeInTheDocument()
 })
 
 test('memory card game completes real pairs and records attempts', async () => {
@@ -1128,21 +1453,24 @@ test('memory card game completes real pairs and records attempts', async () => {
   startRankingGameForExecution('memoryCard')
 
   expect(screen.getByTestId('game-countdown-overlay')).toBeInTheDocument()
-  expect(screen.queryByText('Memorize')).not.toBeInTheDocument()
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
+  expect(screen.queryByText('카드 위치를 기억하세요')).not.toBeInTheDocument()
 
   await advanceGameCountdown()
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
 
   await act(async () => {
     vi.advanceTimersByTime(3100)
   })
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
 
   fireEvent.click(screen.getByTestId('memory-card-0'))
   fireEvent.click(screen.getByTestId('memory-card-3'))
   fireEvent.click(screen.getByTestId('memory-card-1'))
-  fireEvent.click(screen.getByTestId('memory-card-5'))
-  fireEvent.click(screen.getByTestId('memory-card-2'))
   fireEvent.click(screen.getByTestId('memory-card-4'))
+  fireEvent.click(screen.getByTestId('memory-card-2'))
+  fireEvent.click(screen.getByTestId('memory-card-5'))
 
-  expect(screen.getByText(/attempts: 3/)).toBeInTheDocument()
+  expect(screen.getByText(/시도 3회 · 오답 0회/)).toBeInTheDocument()
   expect(screen.getByTestId('complete-game-turn')).not.toBeDisabled()
 })

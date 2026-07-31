@@ -1,7 +1,25 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { getTossShareLink, saveBase64Data, setClipboardText, share } from '@apps-in-toss/web-framework'
-import { BottomCTA, BottomSheet, Button, IconButton, ListHeader, ListRow, SegmentedControl, Switch, Tab, TextField, Top, useWebToast } from '@toss/tds-mobile'
+import { useReducer } from 'react'
+import { BottomCTA, BottomSheet, Button, ConfirmDialog, IconButton, ListHeader, ListRow, SegmentedControl, Switch, Tab, TextField, Top, useWebToast } from '@toss/tds-mobile'
 import settlementCompleteImage from './assets/settlement-complete.jpg'
+import { getGameById, getGamesForParticipants } from './games/catalog'
+import { pickOne, shuffle } from './games/core/random'
+import { createGameScore, formatGameScore, getSettlementTargetScores as selectSettlementTargetScores, rankScores } from './games/core/scoring'
+import { createInitialGameSession, gameSessionReducer } from './games/core/session'
+import { buildSettlementPreview as buildSettlementPreviewCore, calculateSettlementResult as calculateSettlementResultCore, formatWon, settlementModes } from './games/core/settlement'
+import { createEnvelopeAssignments, createRouletteGradient, getRouletteRotation } from './games/random/mechanics'
+import { blobToBase64, createSettlementImageBlob, deliverSettlementImage } from './results/share'
+import {
+  calculateFiveSecondResult,
+  calculateTimingResult,
+  createBalancedNumberLayout,
+  createMemoryDeck,
+  getReactionDelayMs,
+  getReactionFeedback,
+  getTimingStartDirection,
+  getTimingStopPosition as calculateTimingStopPosition,
+} from './games/ranking/mechanics'
 
 const tabs = {
   home: 'home',
@@ -45,172 +63,10 @@ const historyItems = [
   { id: 4, icon: 'sports_esports', date: '7월 02일 | PC방', badge: '정산 완료', amount: 17300, people: 2 },
 ]
 
-const settlementModes = [
-  { id: 'equal', icon: 'groups', title: '똑같이 나누기', description: '모두 같은 금액을 내요.' },
-  { id: 'exempt', icon: 'person_off', title: '한 명 면제', description: '한 명을 뽑고 나머지가 나눠 내요.' },
-  { id: 'extra', icon: 'add_card', title: '꼴등 더 내기', description: '꼴등이 2인분을 부담해요.' },
-  { id: 'discount', icon: 'workspace_premium', title: '1등 덜 내기', description: '1등은 기본 1/N의 50%만 내요.' },
-]
-
-const discountWinnerRate = 0.5
-
-const gameCatalog = [
-  { id: 'roulette', category: 'random', icon: 'published_with_changes', title: '룰렛 돌리기', badge: '기본', description: '선택한 정산 방식에 맞춰 무작위 대상자를 뽑아요.', rule: '룰렛을 돌리면 선택한 정산 방식에 따라 결과가 적용돼요.' },
-  { id: 'fastRandom', category: 'random', icon: 'bolt', title: '빠른 랜덤 뽑기', badge: '빠른 결정', description: '버튼 한 번으로 빠르게 대상자를 정해요.', rule: '참여자 중 한 명을 즉시 뽑아 정산 방식에 적용해요.' },
-  { id: 'receiptEnvelope', category: 'random', icon: 'drafts', title: '영수증 봉투 뽑기', badge: '추천 게임', description: '봉투를 골라 숨겨진 정산 결과를 확인해요.', rule: '봉투 안에 들어있는 이름을 뽑아 정산 방식에 적용해요.' },
-  { id: 'reaction', category: 'ranking', icon: 'flash_on', title: '반응속도 대결', badge: '순위 게임', description: '신호가 뜨면 가장 빠르게 눌러요.', rule: '신호 후 클릭까지 걸린 시간이 짧을수록 높은 순위예요.', requiresCountdownReady: true },
-  { id: 'fiveSeconds', category: 'ranking', icon: 'timer', title: '딱 5초 챌린지', badge: '순위 게임', description: '5초에 가장 가깝게 멈춰요.', rule: '5.000초와의 차이가 작을수록 높은 순위예요.' },
-  { id: 'timingStop', category: 'ranking', icon: 'speed', title: '타이밍 멈추기', badge: '순위 게임', description: '움직이는 게이지를 목표 구간에 멈춰요.', rule: '목표 중앙에 가까울수록 높은 순위예요.', requiresCountdownReady: true },
-  { id: 'numberOrder', category: 'ranking', icon: 'pin', title: '숫자 순서대로 누르기', badge: '순위 게임', description: '숨어 있는 숫자를 순서대로 눌러요.', rule: '완료 시간이 짧고 실수가 적을수록 높은 순위예요.' },
-  { id: 'movingTarget', category: 'ranking', icon: 'my_location', title: '움직이는 표적 맞히기', badge: '순위 게임', description: '움직이는 표적을 제한 시간 안에 맞혀요.', rule: '맞힌 표적 수가 많을수록 높은 순위예요.' },
-  { id: 'memoryCard', category: 'ranking', icon: 'style', title: '기억력 카드 게임', badge: '순위 게임', description: '같은 그림의 카드를 빠르게 찾아요.', rule: '완료 시간이 짧고 시도 수가 적을수록 높은 순위예요.', requiresCountdownReady: true },
-]
+const earlyReactionRankMetric = Number.MAX_SAFE_INTEGER
+const maxParticipants = 8
 
 const amountKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', 'backspace']
-
-function formatWon(value) {
-  return `${Number(value || 0).toLocaleString('ko-KR')}원`
-}
-
-function allocateAmountByWeights(amount, participants, getWeight) {
-  const weights = participants.map((participant) => Math.max(0, getWeight(participant)))
-  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0)
-
-  if (participants.length === 0 || totalWeight <= 0) {
-    return participants.map((participant) => ({ participant, amount: 0 }))
-  }
-
-  const rawAmounts = weights.map((weight) => Math.floor((amount * weight) / totalWeight))
-  const remainder = amount - rawAmounts.reduce((sum, value) => sum + value, 0)
-  const lastIndex = rawAmounts.length - 1
-  rawAmounts[lastIndex] += remainder
-
-  return participants.map((participant, index) => ({
-    participant,
-    amount: rawAmounts[index],
-  }))
-}
-
-function allocateEvenly(amount, participants) {
-  return allocateAmountByWeights(amount, participants, () => 1)
-}
-
-function buildSettlementPreview({ amount, participants, settlementMode, selectedParticipant }) {
-  const result = calculateSettlementResult({ amount, participants, settlementMode, selectedParticipant })
-  const selectedLine = result.lineItems.find((item) => item.highlighted)
-  const otherLine = result.lineItems.find((item) => !item.highlighted)
-
-  if (settlementMode === 'extra') {
-    return {
-      rule: '꼴등은 2인분, 나머지는 1인분을 부담해요',
-      amounts: `예상 선택자 ${formatWon(selectedLine?.amount)} · 나머지 각 ${formatWon(otherLine?.amount)}`,
-    }
-  }
-
-  if (settlementMode === 'discount') {
-    return {
-      rule: '1등/선택자는 기본 1/N의 50%, 나머지가 잔액을 균등 부담해요',
-      amounts: `예상 선택자 ${formatWon(selectedLine?.amount)} · 나머지 각 ${formatWon(otherLine?.amount)}`,
-    }
-  }
-
-  if (settlementMode === 'exempt') {
-    return {
-      rule: '선택된 한 명은 0원, 나머지가 금액을 균등 부담해요',
-      amounts: `면제 1명 0원 · 나머지 각 ${formatWon(otherLine?.amount)}`,
-    }
-  }
-
-  return {
-    rule: '참여자 모두가 같은 금액을 부담해요',
-    amounts: `각자 ${formatWon(result.lineItems[0]?.amount)}`,
-  }
-}
-
-function calculateSettlementResult({ amount, participants, settlementMode, selectedParticipant }) {
-  const mode = settlementModes.find((item) => item.id === settlementMode) || settlementModes[1]
-  const target = participants.includes(selectedParticipant) ? selectedParticipant : participants[0]
-  let allocations
-  let summaryText
-
-  if (settlementMode === 'equal') {
-    allocations = allocateEvenly(amount, participants)
-    summaryText = `참여자 ${participants.length}명이 각 ${formatWon(allocations[0]?.amount)}을 부담합니다.`
-  } else if (settlementMode === 'extra') {
-    allocations = allocateAmountByWeights(amount, participants, (participant) => (participant === target ? 2 : 1))
-    const selectedAmount = allocations.find((item) => item.participant === target)?.amount
-    summaryText = `${target} 님이 2인분인 ${formatWon(selectedAmount)}을 부담합니다.`
-  } else if (settlementMode === 'discount') {
-    const equalBase = Math.floor(amount / Math.max(1, participants.length))
-    const selectedAmount = Math.floor(equalBase * discountWinnerRate)
-    const otherParticipants = participants.filter((participant) => participant !== target)
-    const otherAllocations = allocateEvenly(Math.max(0, amount - selectedAmount), otherParticipants)
-    allocations = participants.map((participant) => (
-      participant === target
-        ? { participant, amount: selectedAmount }
-        : otherAllocations.find((item) => item.participant === participant) || { participant, amount: 0 }
-    ))
-    summaryText = `${target} 님은 기본 1/N의 50%만 부담하고, 나머지가 잔액을 나눕니다.`
-  } else {
-    const paidParticipants = participants.filter((participant) => participant !== target)
-    const paidAllocations = allocateEvenly(amount, paidParticipants)
-    allocations = participants.map((participant) => (
-      participant === target
-        ? { participant, amount: 0 }
-        : paidAllocations.find((item) => item.participant === participant) || { participant, amount: 0 }
-    ))
-    summaryText = `${target} 님이 면제되고, 나머지가 금액을 나눕니다.`
-  }
-
-  const lineItems = allocations.map((item) => {
-    const highlighted = settlementMode !== 'equal' && item.participant === target
-    let description = formatWon(item.amount)
-
-    if (settlementMode === 'equal') {
-      description = '1/N 부담'
-    } else if (settlementMode === 'exempt' && highlighted) {
-      description = '면제 (0원)'
-    } else if (settlementMode === 'extra' && highlighted) {
-      description = '2인분 부담'
-    } else if (settlementMode === 'extra') {
-      description = '1인분 부담'
-    } else if (settlementMode === 'discount' && highlighted) {
-      description = '50% 할인'
-    } else if (settlementMode === 'discount') {
-      description = '잔액 균등 부담'
-    }
-
-    return {
-      ...item,
-      amountText: formatWon(item.amount),
-      description,
-      highlighted,
-    }
-  })
-
-  return {
-    amount,
-    lineItems,
-    mode,
-    modeLabel: mode.title,
-    selectedParticipant: target,
-    shareText: lineItems.map((item) => `${item.participant}: ${item.amountText}`).join(' / '),
-    summaryText,
-  }
-}
-
-function base64Encode(text) {
-  return window.btoa(unescape(encodeURIComponent(text)))
-}
-
-function escapeSvgText(text) {
-  return String(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;')
-}
 
 export function sanitizeFileName(title) {
   const cleanedTitle = String(title || '')
@@ -224,7 +80,7 @@ export function sanitizeFileName(title) {
 
 function buildSharePayload({ amount, participants, settlementResult, settlementTitle }) {
   const title = settlementTitle.trim()
-  const result = settlementResult || calculateSettlementResult({ amount, participants, settlementMode: 'exempt', selectedParticipant: participants[0] })
+  const result = settlementResult || calculateSettlementResultCore({ amount, participants, settlementMode: 'exempt', selectedParticipant: participants[0] })
   const memberLines = result.lineItems.map((item) => `${item.participant}: ${item.amountText}`)
 
   return {
@@ -257,64 +113,6 @@ function buildSettlementDeepLink(payload) {
   return `intoss://nuganellae/settlement-result?${params.toString()}`
 }
 
-function buildReceiptSvg(payload) {
-  const rows = payload.lineItems.map((item, index) => {
-    return `
-      <text x="48" y="${230 + index * 38}" fill="#4e5968" font-size="22" font-weight="700">${escapeSvgText(item.participant)}</text>
-      <text x="452" y="${230 + index * 38}" fill="#191f28" font-size="22" font-weight="800" text-anchor="end">${item.amountText}</text>
-    `
-  }).join('')
-
-  return `
-    <svg xmlns="http://www.w3.org/2000/svg" width="500" height="560" viewBox="0 0 500 560">
-      <rect width="500" height="560" rx="36" fill="#f9fafb"/>
-      <rect x="28" y="28" width="444" height="504" rx="28" fill="#ffffff"/>
-      <circle cx="250" cy="96" r="34" fill="#e8f3ff"/>
-      <text x="250" y="105" fill="#3182f6" font-size="34" font-weight="900" text-anchor="middle">누</text>
-      <text x="250" y="158" fill="#191f28" font-size="30" font-weight="900" text-anchor="middle">${escapeSvgText(payload.title)}</text>
-      <text x="250" y="190" fill="#6b7684" font-size="18" font-weight="600" text-anchor="middle">총 ${formatWon(payload.amount)} · ${escapeSvgText(payload.modeLabel)}</text>
-      ${rows}
-      <rect x="48" y="430" width="404" height="70" rx="18" fill="#f2f4f6"/>
-      <text x="72" y="474" fill="#4e5968" font-size="20" font-weight="700">${escapeSvgText(payload.modeLabel)} 적용</text>
-      <text x="428" y="474" fill="#3182f6" font-size="24" font-weight="900" text-anchor="end">${formatWon(payload.amount)}</text>
-    </svg>
-  `
-}
-
-async function createSettlementImageBase64(payload) {
-  const svg = buildReceiptSvg(payload)
-  const fallbackBase64 = base64Encode(svg)
-
-  if (typeof document === 'undefined' || navigator.userAgent.includes('jsdom')) {
-    return fallbackBase64
-  }
-
-  const canvas = document.createElement('canvas')
-  let context
-  try {
-    context = canvas.getContext?.('2d')
-  } catch {
-    context = null
-  }
-
-  if (context == null || typeof Image === 'undefined') {
-    return fallbackBase64
-  }
-
-  canvas.width = 500
-  canvas.height = 560
-
-  return new Promise((resolve) => {
-    const image = new Image()
-    image.onload = () => {
-      context.drawImage(image, 0, 0)
-      resolve(canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, ''))
-    }
-    image.onerror = () => resolve(fallbackBase64)
-    image.src = `data:image/svg+xml;base64,${fallbackBase64}`
-  })
-}
-
 async function getSettlementShareLink(payload) {
   return getTossShareLink(buildSettlementDeepLink(payload))
 }
@@ -331,15 +129,23 @@ async function copySettlementLink(payload) {
   return tossLink
 }
 
-function downloadBase64Image({ data, fileName }) {
-  if (typeof document === 'undefined') {
-    return
-  }
+async function saveSettlementImage(payload) {
+  const blob = await createSettlementImageBlob(payload)
 
-  const link = document.createElement('a')
-  link.href = `data:image/png;base64,${data}`
-  link.download = fileName
-  link.click()
+  return deliverSettlementImage({
+    blob,
+    fileName: payload.fileName,
+    message: payload.message,
+    nativeClipboard: (message) => setClipboardText(message),
+    nativeSave: async (imageBlob) => {
+      await saveBase64Data({
+        data: await blobToBase64(imageBlob),
+        fileName: payload.fileName,
+        mimeType: 'image/png',
+      })
+    },
+    nativeTextShare: (message) => share({ message }),
+  })
 }
 
 function Icon({ children, className = '' }) {
@@ -387,83 +193,45 @@ function ScreenCTA({ children, onClick, disabled = false, color = 'primary', var
 }
 
 function getGameScoreLabel(game, score) {
-  if (game.id === 'movingTarget') {
-    return `${score.rawScore}점`
-  }
-
-  if (game.id === 'fiveSeconds') {
-    return `${score.displayScore}초`
-  }
-
-  return `${score.displayScore}ms`
-}
-
-function buildGameScore({ gameId, participant, index }) {
-  const scoreTable = {
-    reaction: [218, 287, 346, 412],
-    fiveSeconds: [5, 5, 5.37, 4.41],
-    timingStop: [8, 19, 27, 35],
-    numberOrder: [1240, 1510, 1690, 1810],
-    movingTarget: [9, 7, 6, 5],
-    memoryCard: [18, 22, 25, 29],
-  }
-  const rawScore = scoreTable[gameId]?.[index] ?? (300 + index * 60)
-  const lowerIsBetter = gameId !== 'movingTarget'
-  const rankMetric = gameId === 'fiveSeconds'
-    ? Math.abs(rawScore - 5)
-    : lowerIsBetter ? rawScore : -rawScore
-
-  return {
-    participant,
-    gameId,
-    metric: rankMetric,
-    rawScore,
-    displayScore: Number(rawScore).toLocaleString('ko-KR', {
-      maximumFractionDigits: gameId === 'fiveSeconds' ? 3 : 0,
-      minimumFractionDigits: gameId === 'fiveSeconds' ? 3 : 0,
-    }),
-    rankMetric,
-  }
+  return formatGameScore(score)
 }
 
 function createMeasuredGameScore({ detail = {}, displayScore, gameId, metric, participant, rawScore }) {
-  return {
+  let displayValue = String(Math.round(Number(displayScore)))
+  let unit = 'ms'
+
+  if (gameId === 'fiveSeconds') {
+    displayValue = Number(rawScore).toFixed(3)
+    unit = '초'
+  } else if (gameId === 'timingStop') {
+    displayValue = Number(displayScore).toFixed(1)
+    unit = '점'
+  } else if (gameId === 'numberOrder' || gameId === 'memoryCard') {
+    displayValue = (Number(rawScore) / 1000).toFixed(3)
+    unit = '초'
+  }
+
+  return createGameScore({
     detail,
-    displayScore: String(displayScore),
+    displayValue,
     gameId,
-    metric,
     participant,
     rankMetric: metric,
-    rawScore,
-  }
-}
-
-function getRankedScores(scores) {
-  const sortedScores = [...scores].sort((a, b) => a.rankMetric - b.rankMetric)
-  let previousMetric = null
-  let currentRank = 0
-
-  return sortedScores.map((score, index) => {
-    if (score.rankMetric !== previousMetric) {
-      currentRank = index + 1
-      previousMetric = score.rankMetric
-    }
-
-    return { ...score, rank: currentRank }
+    rawValue: rawScore,
+    unit,
   })
 }
 
+export function getTimingStopPosition(elapsedMs, cycleMs = 1600) {
+  return calculateTimingStopPosition(elapsedMs, cycleMs)
+}
+
+function getRankedScores(scores) {
+  return rankScores(scores)
+}
+
 function getSettlementTargetScores(scores, settlementMode) {
-  if (scores.length === 0) {
-    return []
-  }
-
-  if (settlementMode === 'extra') {
-    const lastRank = Math.max(...scores.map((score) => score.rank))
-    return scores.filter((score) => score.rank === lastRank)
-  }
-
-  return scores.filter((score) => score.rank === 1)
+  return selectSettlementTargetScores(scores, settlementMode)
 }
 
 function App() {
@@ -473,19 +241,22 @@ function App() {
   const [amount, setAmount] = useState(0)
   const [participants, setParticipants] = useState(baseParticipants)
   const [newParticipant, setNewParticipant] = useState('')
+  const [participantMessage, setParticipantMessage] = useState('')
   const [settlementMode, setSettlementMode] = useState('exempt')
   const [winner, setWinner] = useState(baseParticipants[baseParticipants.length - 1])
   const [shareOpen, setShareOpen] = useState(false)
   const [filter, setFilter] = useState('전체')
   const [stepHistory, setStepHistory] = useState([])
   const [rouletteSpinning, setRouletteSpinning] = useState(false)
+  const [rouletteDuration, setRouletteDuration] = useState(2000)
+  const [rouletteRotation, setRouletteRotation] = useState(0)
+  const [randomError, setRandomError] = useState('')
   const [selectedGameId, setSelectedGameId] = useState('roulette')
-  const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0)
-  const [gameScores, setGameScores] = useState([])
-  const [rematchParticipants, setRematchParticipants] = useState([])
-  const [rematchScores, setRematchScores] = useState([])
-  const [isRematchRound, setIsRematchRound] = useState(false)
-  const [allowReselect, setAllowReselect] = useState(true)
+  const [gameSession, dispatchGameSession] = useReducer(gameSessionReducer, undefined, createInitialGameSession)
+  const [allowReselect, setAllowReselect] = useState(false)
+  const [leaveGameDialogOpen, setLeaveGameDialogOpen] = useState(false)
+  const [discardResultDialogOpen, setDiscardResultDialogOpen] = useState(false)
+  const [restartTargetStep, setRestartTargetStep] = useState(null)
 
   const paidParticipants = useMemo(
     () => participants.filter((participant) => participant !== winner),
@@ -494,7 +265,7 @@ function App() {
   const effectiveAmount = amount || 84000
   const splitAmount = Math.ceil(effectiveAmount / Math.max(1, paidParticipants.length))
   const settlementResult = useMemo(
-    () => calculateSettlementResult({
+    () => calculateSettlementResultCore({
       amount: effectiveAmount,
       participants,
       selectedParticipant: winner,
@@ -503,12 +274,16 @@ function App() {
     [effectiveAmount, participants, settlementMode, winner],
   )
   const canProceedFromTitle = settlementTitle.trim().length > 0
-  const selectedGame = gameCatalog.find((game) => game.id === selectedGameId) || gameCatalog[0]
+  const selectedGame = getGameById(selectedGameId)
+  const currentPlayerIndex = gameSession.currentPlayerIndex
+  const gameScores = gameSession.scores
+  const rematchScores = gameSession.scores
+  const isRematchRound = gameSession.isRematchRound
   const rankedScores = useMemo(() => getRankedScores(gameScores, selectedGame), [gameScores, selectedGame])
   const rematchRankedScores = useMemo(() => getRankedScores(rematchScores, selectedGame), [rematchScores, selectedGame])
   const settlementTargetScores = getSettlementTargetScores(isRematchRound ? rematchRankedScores : rankedScores, settlementMode)
-  const activeGameParticipants = isRematchRound ? rematchParticipants : participants
-  const activeGameScores = isRematchRound ? rematchScores : gameScores
+  const activeGameParticipants = gameSession.playerOrder.length > 0 ? gameSession.playerOrder : participants
+  const activeGameScores = gameSession.scores
   const isFinalStep = step === steps.finalResult || step === steps.gameFinalResult
   const isResultStep = step === steps.rouletteResult || step === steps.rankingResult || step === steps.tieRematch
   const isGameInProgressStep = step === steps.participantTurn || step === steps.gamePlay || step === steps.roulette
@@ -520,14 +295,12 @@ function App() {
     }
 
     const timerId = window.setTimeout(() => {
-      const nextWinner = participants[participants.length - 1]
-      setWinner(nextWinner)
       setRouletteSpinning(false)
       navigateHomeStep(steps.rouletteResult)
-    }, 2000)
+    }, rouletteDuration)
 
     return () => window.clearTimeout(timerId)
-  }, [participants, rouletteSpinning])
+  }, [rouletteDuration, rouletteSpinning])
 
   function navigateHomeStep(nextStep, { resetHistory = false, replace = false } = {}) {
     setActiveTab(tabs.home)
@@ -572,14 +345,7 @@ function App() {
 
   function goPreviousHomeStep() {
     if (isGameInProgressStep) {
-      const shouldLeave = window.confirm('게임을 나가면 현재 기록이 초기화돼요. 나갈까요?')
-
-      if (!shouldLeave) {
-        return
-      }
-
-      resetGameProgress()
-      navigateHomeStep(steps.gameSelect, { resetHistory: true })
+      setLeaveGameDialogOpen(true)
       return
     }
 
@@ -592,6 +358,51 @@ function App() {
     setStep(previousStep)
   }
 
+  function closeLeaveGameDialog() {
+    setLeaveGameDialogOpen(false)
+  }
+
+  function confirmLeaveGame() {
+    setLeaveGameDialogOpen(false)
+    resetGameProgress()
+    navigateHomeStep(steps.gameSelect, { resetHistory: true })
+  }
+
+  function requestResultRestart(targetStep) {
+    setRestartTargetStep(targetStep)
+    setDiscardResultDialogOpen(true)
+  }
+
+  function closeDiscardResultDialog() {
+    setDiscardResultDialogOpen(false)
+    setRestartTargetStep(null)
+  }
+
+  function confirmDiscardResult() {
+    const targetStep = restartTargetStep
+
+    setDiscardResultDialogOpen(false)
+    setRestartTargetStep(null)
+    setWinner(participants[participants.length - 1] || '')
+    setRouletteSpinning(false)
+    setRouletteDuration(2000)
+    setRouletteRotation(0)
+    setRandomError('')
+
+    if (selectedGame.category === 'ranking') {
+      dispatchGameSession({
+        type: 'DISCARD_AND_RESTART',
+        payload: { playerOrder: shuffle(participants) },
+      })
+    } else {
+      resetGameProgress()
+    }
+
+    if (targetStep) {
+      navigateHomeStep(targetStep, { resetHistory: true })
+    }
+  }
+
   function handleParticipantSubmit(event) {
     event.preventDefault()
     const name = newParticipant.trim()
@@ -601,7 +412,14 @@ function App() {
       return
     }
 
+    if (participants.length >= maxParticipants) {
+      setParticipantMessage(`최대 ${maxParticipants}명까지 참여할 수 있어요.`)
+      setNewParticipant('')
+      return
+    }
+
     setParticipants([...participants, name])
+    setParticipantMessage('')
     setNewParticipant('')
   }
 
@@ -632,28 +450,47 @@ function App() {
     navigateHomeStep(steps.gameSelect)
   }
 
-  function spinRoulette() {
-    setRouletteSpinning(true)
+  function spinRoulette(mode = 'wheel') {
+    try {
+      const selectedParticipant = pickOne(participants)
+      const selectedIndex = participants.indexOf(selectedParticipant)
+      const duration = mode === 'quick' ? 350 : 2000
+
+      setWinner(selectedParticipant)
+      setRouletteDuration(duration)
+      setRouletteRotation((current) => (
+        Math.ceil(current / 360) * 360
+        + getRouletteRotation({
+          participantCount: participants.length,
+          selectedIndex,
+          turns: mode === 'quick' ? 1 : 4,
+        })
+      ))
+      setRandomError('')
+      setRouletteSpinning(true)
+    } catch {
+      setRandomError('안전한 무작위 선택을 사용할 수 없어요. 잠시 후 다시 시도해 주세요.')
+    }
   }
 
   function resetGameProgress() {
-    setCurrentPlayerIndex(0)
-    setGameScores([])
-    setRematchParticipants([])
-    setRematchScores([])
-    setIsRematchRound(false)
+    dispatchGameSession({ type: 'EXIT_SESSION' })
   }
 
   function resetSettlementDraft() {
     setSettlementTitle('')
     setAmount(0)
     setNewParticipant('')
+    setParticipantMessage('')
     setParticipants([...baseParticipants])
     setSettlementMode('exempt')
     setWinner(baseParticipants[baseParticipants.length - 1])
-    setAllowReselect(true)
+    setAllowReselect(false)
     setSelectedGameId('roulette')
     setRouletteSpinning(false)
+    setRouletteDuration(2000)
+    setRouletteRotation(0)
+    setRandomError('')
     setShareOpen(false)
     resetGameProgress()
   }
@@ -675,20 +512,32 @@ function App() {
       return
     }
 
+    dispatchGameSession({
+      type: 'START_SESSION',
+      payload: {
+        gameId: selectedGame.id,
+        playerOrder: shuffle(participants),
+      },
+    })
     navigateHomeStep(steps.gameRules)
   }
 
-  function startParticipantTurn(index = currentPlayerIndex) {
-    setCurrentPlayerIndex(index)
+  function startParticipantTurn() {
+    dispatchGameSession({ type: 'ABORT_ACTIVE_TURN', payload: { reason: null } })
     navigateHomeStep(steps.gamePlay)
+  }
+
+  function abortActiveGameTurn(reason) {
+    dispatchGameSession({ type: 'ABORT_ACTIVE_TURN', payload: { reason } })
+    navigateHomeStep(steps.participantTurn, { replace: true })
   }
 
   function startTieRematch() {
     const nextRematchParticipants = settlementTargetScores.map((score) => score.participant)
-    setRematchParticipants(nextRematchParticipants)
-    setRematchScores([])
-    setIsRematchRound(true)
-    setCurrentPlayerIndex(0)
+    dispatchGameSession({
+      type: 'START_TARGET_REMATCH',
+      payload: { participants: shuffle(nextRematchParticipants) },
+    })
     navigateHomeStep(steps.participantTurn)
   }
 
@@ -698,20 +547,22 @@ function App() {
   }
 
   function completeGameTurn(measuredScore) {
+    if (!measuredScore) {
+      return
+    }
+
     const participant = activeGameParticipants[currentPlayerIndex]
     const nextScores = [
       ...activeGameScores,
-      measuredScore || buildGameScore({ gameId: selectedGame.id, participant, index: currentPlayerIndex }),
+      measuredScore,
     ]
 
-    if (isRematchRound) {
-      setRematchScores(nextScores)
-    } else {
-      setGameScores(nextScores)
-    }
+    dispatchGameSession({
+      type: 'COMPLETE_TURN',
+      payload: { participant, score: measuredScore },
+    })
 
     if (currentPlayerIndex < activeGameParticipants.length - 1) {
-      setCurrentPlayerIndex((index) => index + 1)
       navigateHomeStep(steps.participantTurn)
       return
     }
@@ -719,27 +570,24 @@ function App() {
     const ranked = getRankedScores(nextScores, selectedGame)
     const targetScores = getSettlementTargetScores(ranked, settlementMode)
     if (targetScores.length > 1) {
-      if (isRematchRound) {
-        setRematchParticipants(targetScores.map((score) => score.participant))
-      }
       navigateHomeStep(steps.tieRematch)
       return
     }
 
     setWinner(targetScores[0].participant)
     if (isRematchRound) {
-      setIsRematchRound(false)
-      setRematchParticipants([])
-      setRematchScores([])
+      dispatchGameSession({ type: 'CONFIRM_RESULT' })
       navigateHomeStep(steps.gameFinalResult, { resetHistory: true })
       return
     }
 
+    dispatchGameSession({ type: 'CONFIRM_RESULT' })
     navigateHomeStep(steps.rankingResult)
   }
 
   function confirmGameWinner(participant) {
     setWinner(participant)
+    dispatchGameSession({ type: 'CONFIRM_RESULT' })
     navigateHomeStep(steps.gameFinalResult, { resetHistory: true })
   }
 
@@ -778,8 +626,12 @@ function App() {
         {activeTab === tabs.home && step === steps.participants && (
           <ParticipantsScreen
             newParticipant={newParticipant}
+            participantMessage={participantMessage}
             participants={participants}
-            onChangeName={setNewParticipant}
+            onChangeName={(name) => {
+              setNewParticipant(name)
+              setParticipantMessage('')
+            }}
             onRemove={removeParticipant}
             onSubmit={handleParticipantSubmit}
             onNext={() => navigateHomeStep(steps.method)}
@@ -801,7 +653,7 @@ function App() {
         {activeTab === tabs.home && step === steps.gameSelect && (
           <GameSelectScreen
             amount={effectiveAmount}
-            games={gameCatalog}
+            games={getGamesForParticipants(participants.length)}
             participants={participants}
             selectedGameId={selectedGameId}
             settlementMode={settlementMode}
@@ -810,18 +662,18 @@ function App() {
           />
         )}
         {activeTab === tabs.home && step === steps.gameRules && (
-          <GameRulesScreen amount={effectiveAmount} game={selectedGame} participants={participants} settlementMode={settlementMode} winner={winner} onNext={() => navigateHomeStep(steps.playOrder)} />
+          <GameRulesScreen amount={effectiveAmount} game={selectedGame} participants={activeGameParticipants} settlementMode={settlementMode} winner={winner} onNext={() => navigateHomeStep(steps.playOrder)} />
         )}
         {activeTab === tabs.home && step === steps.playOrder && (
-          <PlayOrderScreen participants={participants} onNext={() => navigateHomeStep(steps.participantTurn)} />
+          <PlayOrderScreen participants={activeGameParticipants} onNext={() => navigateHomeStep(steps.participantTurn)} />
         )}
         {activeTab === tabs.home && step === steps.participantTurn && (
-          <ParticipantTurnScreen participant={activeGameParticipants[currentPlayerIndex]} progress={`${currentPlayerIndex + 1}/${activeGameParticipants.length}`} onNext={() => startParticipantTurn(currentPlayerIndex)} />
+          <ParticipantTurnScreen abortReason={gameSession.abortReason} participant={activeGameParticipants[currentPlayerIndex]} progress={`${currentPlayerIndex + 1}/${activeGameParticipants.length}`} onNext={startParticipantTurn} />
         )}
         {activeTab === tabs.home && step === steps.gamePlay && (
           selectedGame.category === 'random'
             ? <RandomGameScreen game={selectedGame} participants={participants} onComplete={completeRandomGame} />
-            : <RankingGameScreen game={selectedGame} participant={activeGameParticipants[currentPlayerIndex]} playerIndex={currentPlayerIndex} previousScores={activeGameScores} onComplete={completeGameTurn} />
+            : <RankingGameScreen game={selectedGame} participant={activeGameParticipants[currentPlayerIndex]} playerIndex={currentPlayerIndex} previousScores={activeGameScores} onAbort={abortActiveGameTurn} onComplete={completeGameTurn} />
         )}
         {activeTab === tabs.home && step === steps.rankingResult && (
           <RankingResultScreen game={selectedGame} scores={rankedScores} settlementMode={settlementMode} onNext={() => confirmGameWinner(settlementTargetScores[0]?.participant || winner)} />
@@ -830,12 +682,12 @@ function App() {
           <TieRematchScreen game={selectedGame} settlementMode={settlementMode} tiedScores={settlementTargetScores} onStartRematch={startTieRematch} />
         )}
         {activeTab === tabs.home && step === steps.roulette && (
-          <RouletteScreen amount={effectiveAmount} participants={participants} settlementMode={settlementMode} spinning={rouletteSpinning} onSpin={spinRoulette} />
+          <RouletteScreen amount={effectiveAmount} duration={rouletteDuration} error={randomError} participants={participants} rotation={rouletteRotation} settlementMode={settlementMode} spinning={rouletteSpinning} onSpin={spinRoulette} />
         )}
         {activeTab === tabs.home && step === steps.rouletteResult && (
           selectedGame.id === 'roulette'
-            ? <RouletteResultScreen amount={effectiveAmount} canRetry={allowReselect} settlementMode={settlementMode} settlementResult={settlementResult} winner={winner} onRetry={() => navigateHomeStep(steps.roulette)} onNext={() => navigateHomeStep(steps.finalResult, { resetHistory: true })} />
-            : <RandomResultScreen amount={effectiveAmount} canRetry={allowReselect} game={selectedGame} settlementMode={settlementMode} settlementResult={settlementResult} winner={winner} onRetry={() => navigateHomeStep(steps.gamePlay)} onNext={() => navigateHomeStep(steps.finalResult, { resetHistory: true })} />
+            ? <RouletteResultScreen amount={effectiveAmount} canRetry={allowReselect} settlementMode={settlementMode} settlementResult={settlementResult} winner={winner} onRetry={() => requestResultRestart(steps.roulette)} onNext={() => navigateHomeStep(steps.finalResult, { resetHistory: true })} />
+            : <RandomResultScreen amount={effectiveAmount} canRetry={allowReselect} game={selectedGame} settlementMode={settlementMode} settlementResult={settlementResult} winner={winner} onRetry={() => requestResultRestart(steps.gamePlay)} onNext={() => navigateHomeStep(steps.finalResult, { resetHistory: true })} />
         )}
         {activeTab === tabs.home && step === steps.finalResult && (
           <FinalResultScreen
@@ -875,8 +727,45 @@ function App() {
           open={shareOpen}
           participants={participants}
           settlementResult={settlementResult}
-          settlementTitle={settlementTitle.trim() || '?쇨껸???뚯떇 ?뺤궛'}
+          settlementTitle={settlementTitle.trim() || '회식 정산'}
           onClose={() => setShareOpen(false)}
+        />
+
+        <ConfirmDialog
+          closeOnBackEvent
+          closeOnDimmerClick
+          description="게임을 나가면 현재 기록이 초기화돼요."
+          open={leaveGameDialogOpen}
+          title="게임을 나갈까요?"
+          onClose={closeLeaveGameDialog}
+          cancelButton={(
+            <ConfirmDialog.CancelButton onClick={closeLeaveGameDialog}>
+              계속하기
+            </ConfirmDialog.CancelButton>
+          )}
+          confirmButton={(
+            <ConfirmDialog.ConfirmButton color="danger" onClick={confirmLeaveGame}>
+              나가기
+            </ConfirmDialog.ConfirmButton>
+          )}
+        />
+        <ConfirmDialog
+          closeOnBackEvent
+          closeOnDimmerClick
+          description="현재 결과와 모든 점수가 폐기되며 되돌릴 수 없어요."
+          open={discardResultDialogOpen}
+          title="현재 결과를 폐기할까요?"
+          onClose={closeDiscardResultDialog}
+          cancelButton={(
+            <ConfirmDialog.CancelButton onClick={closeDiscardResultDialog}>
+              결과 유지
+            </ConfirmDialog.CancelButton>
+          )}
+          confirmButton={(
+            <ConfirmDialog.ConfirmButton color="danger" onClick={confirmDiscardResult}>
+              폐기하고 다시 하기
+            </ConfirmDialog.ConfirmButton>
+          )}
         />
       </section>
     </main>
@@ -928,7 +817,7 @@ function StartScreen({ onStart }) {
         </span>
         <Icon>chevron_right</Icon>
       </button>
-      <ScreenCTA icon="arrow_forward" testId="start-settlement" onClick={onStart}>정산 시작하기</ScreenCTA>
+      <ScreenCTA testId="start-settlement" onClick={onStart}>정산 시작하기</ScreenCTA>
     </section>
   )
 }
@@ -960,7 +849,7 @@ function TitleScreen({ title, onChangeTitle, onNext }) {
         />
       </form>
       <div className="tip-card"><Icon>edit_note</Icon> 입력한 타이틀은 결과 화면과 공유 이미지 파일명으로 사용합니다.</div>
-      <ScreenCTA disabled={!trimmedTitle} icon="arrow_forward" testId="title-next" onClick={onNext}>금액 입력하기</ScreenCTA>
+      <ScreenCTA disabled={!trimmedTitle} testId="title-next" onClick={onNext}>금액 입력하기</ScreenCTA>
     </section>
   )
 }
@@ -979,7 +868,7 @@ function AmountScreen({ amount, onAddAmount, onInputKey, onReset, onNext }) {
         <Button color="primary" size="small" type="button" variant="weak" onClick={() => onAddAmount(100000)}>+10만 원</Button>
         <Button color="dark" size="small" type="button" variant="weak" onClick={onReset}>초기화</Button>
       </div>
-      <div className="keypad" aria-label="湲덉븸 ?レ옄 ?낅젰">
+      <div className="keypad" aria-label="금액 숫자 입력">
         {amountKeys.map((key) => (
           <button
             aria-label={key === 'backspace' ? '지우기' : key}
@@ -997,21 +886,29 @@ function AmountScreen({ amount, onAddAmount, onInputKey, onReset, onNext }) {
   )
 }
 
-function ParticipantsScreen({ participants, newParticipant, onChangeName, onSubmit, onRemove, onNext }) {
+function ParticipantsScreen({ participants, newParticipant, participantMessage, onChangeName, onSubmit, onRemove, onNext }) {
+  const reachedParticipantLimit = participants.length >= maxParticipants
+  const visibleMessage = reachedParticipantLimit
+    ? `최대 ${maxParticipants}명까지 참여할 수 있어요.`
+    : participantMessage
+
   return (
     <section className="screen participants-screen" aria-labelledby="participants-title">
       <TdsTitle id="participants-title" subtitle="정산에 참여한 멤버들을 추가해 주세요." title="누가 함께했나요?" />
       <form className="participant-form" onSubmit={onSubmit}>
         <TextField
+          aria-label="참여자 이름"
+          aria-describedby={visibleMessage ? 'participant-message' : undefined}
           label="참여자 이름"
           labelOption="sustain"
           placeholder="이름 입력"
-          right={<Button color="primary" size="small" type="submit">추가</Button>}
+          right={<Button color="primary" disabled={reachedParticipantLimit} size="small" type="submit">추가</Button>}
           value={newParticipant}
           variant="box"
           onChange={(event) => onChangeName(event.target.value)}
         />
       </form>
+      {visibleMessage && <p id="participant-message" className="form-message" role="status">{visibleMessage}</p>}
       <ListHeader
         className="compact-list-header"
         title={<ListHeader.TitleParagraph>참여자 목록</ListHeader.TitleParagraph>}
@@ -1032,8 +929,8 @@ function ParticipantsScreen({ participants, newParticipant, onChangeName, onSubm
           />
         ))}
       </ul>
-      <div className="tip-card"><Icon>lightbulb</Icon> 자주 함께하는 친구들을 즐겨찾기에서 불러올 수 있습니다.</div>
-      <ScreenCTA icon="chevron_right" testId="participants-next" onClick={onNext}>정산 방식 고르기</ScreenCTA>
+      <div className="tip-card"><Icon>lightbulb</Icon> 참여자는 2명부터 최대 8명까지 추가할 수 있어요.</div>
+      <ScreenCTA disabled={participants.length < 2} testId="participants-next" onClick={onNext}>정산 방식 고르기</ScreenCTA>
     </section>
   )
 }
@@ -1064,7 +961,7 @@ function MethodScreen({ selected, onSelect, onNext }) {
         ))}
       </ul>
       <div className="info-card"><Icon>info</Icon> 선택한 방식에 따라 정산 결과가 자동으로 계산되어 전송됩니다.</div>
-      <ScreenCTA icon="arrow_forward" testId="method-next" onClick={onNext}>{selected === 'equal' ? '결과 확인하기' : '게임 선택하기'}</ScreenCTA>
+      <ScreenCTA testId="method-next" onClick={onNext}>{selected === 'equal' ? '결과 확인하기' : '게임 선택하기'}</ScreenCTA>
     </section>
   )
 }
@@ -1085,13 +982,13 @@ function ExemptScreen({ allowReselect, amount, people, splitAmount, onAllowResel
         </div>
         <div>
           <small>면제 방식</small>
-          <strong><Icon>casino</Icon> 랜덤 1명</strong>
+          <strong><Icon>person_search</Icon> 무작위 1명</strong>
         </div>
       </div>
       <div className="toggle-row switch-row">
         <span className="toggle-copy">
           <span><Icon>auto_awesome</Icon> 결과 재선택 허용</span>
-          <small>결과가 마음에 들지 않으면 다시 돌릴 수 있어요.</small>
+          <small>기본은 잠금이며, 허용해도 결과 폐기 확인을 거쳐요.</small>
         </span>
         <Switch aria-label="결과 재선택 허용" checked={allowReselect} onChange={(_, checked) => onAllowReselectChange(checked)} />
       </div>
@@ -1100,7 +997,7 @@ function ExemptScreen({ allowReselect, amount, people, splitAmount, onAllowResel
         <p>면제 1명 0원</p>
         <p>나머지 {people - 1}명 각 {formatWon(splitAmount)}</p>
       </div>
-      <ScreenCTA icon="play_arrow" testId="exempt-next" onClick={onNext}>게임 선택하기</ScreenCTA>
+      <ScreenCTA testId="exempt-next" onClick={onNext}>게임 선택하기</ScreenCTA>
     </section>
   )
 }
@@ -1133,7 +1030,7 @@ function getRankingWinnerText(mode, participant) {
   return `${participant} 님 면제권 획득`
 }
 function SettlementRulePreview({ amount, participants, settlementMode, selectedParticipant }) {
-  const preview = buildSettlementPreview({ amount, participants, settlementMode, selectedParticipant })
+  const preview = buildSettlementPreviewCore({ amount, participants, settlementMode, selectedParticipant })
 
   return (
     <div className="preview-card">
@@ -1168,13 +1065,21 @@ function GameSelectScreen({ amount, games, participants, selectedGameId, settlem
                 <small>{game.badge}</small>
                 <strong>{game.title}</strong>
                 <em>{game.description}</em>
+                <span className="game-card-meta">
+                  <b>{game.category === 'random' ? '랜덤' : '순위'}</b>
+                  <b>추천 {game.recommendedPlayers.min}~{game.recommendedPlayers.max}명</b>
+                  <b>예상 {Math.max(10, Math.ceil((game.estimatedSecondsPerPlayer * participants.length) / 10) * 10)}초</b>
+                </span>
+                {participants.length > game.recommendedPlayers.max && (
+                  <span className="game-duration-warning">현재 인원에서는 진행 시간이 길어질 수 있어요.</span>
+                )}
               </span>
               <span className={selectedGameId === game.id ? 'game-check visible' : 'game-check'}><Icon>check_circle</Icon></span>
             </button>
           </li>
         ))}
       </ul>
-      <ScreenCTA icon="play_arrow" testId="game-select-next" onClick={onNext}>게임 시작하기</ScreenCTA>
+      <ScreenCTA testId="game-select-next" onClick={onNext}>게임 시작하기</ScreenCTA>
     </section>
   )
 }
@@ -1197,11 +1102,12 @@ function GameRulesScreen({ amount, game, participants, settlementMode, winner, o
       </div>
       <div className="rule-grid">
         <div><Icon>looks_one</Icon><strong>한 명씩 플레이</strong><small>참여자 순서대로 이 게임을 진행해요.</small></div>
+        {game.id === 'reaction' && <div><Icon>touch_app</Icon><strong>한 번만 클릭</strong><small>지금 누르세요! 전에 누르면 신호 전 클릭으로 꼴등 처리돼요.</small></div>}
         <div><Icon>workspace_premium</Icon><strong>{targetRuleTitle}</strong><small>{targetRuleCopy}</small></div>
         <div><Icon>restart_alt</Icon><strong>동점 재대결</strong><small>{targetRankLabel}이 동점이면 재대결 화면에서 확정해요.</small></div>
       </div>
       <SettlementRulePreview amount={amount} participants={participants} selectedParticipant={winner} settlementMode={settlementMode} />
-      <ScreenCTA icon="arrow_forward" testId="game-rules-next" onClick={onNext}>플레이 순서 확인</ScreenCTA>
+      <ScreenCTA testId="game-rules-next" onClick={onNext}>플레이 순서 확인</ScreenCTA>
     </section>
   )
 }
@@ -1224,104 +1130,111 @@ function PlayOrderScreen({ participants, onNext }) {
   )
 }
 
-function ParticipantTurnScreen({ participant, progress, onNext }) {
+function ParticipantTurnScreen({ abortReason, participant, progress, onNext }) {
   return (
     <section className="screen participant-turn-screen" aria-labelledby="turn-title">
       <TdsTitle centered id="turn-title" subtitle={`${progress} 플레이어`} title="참여자 전환" />
-      <div className="turn-card">
+      <div className="turn-card" aria-atomic="true" aria-live="polite" role="status">
         <span className="avatar giant">{participant.slice(0, 1)}</span>
         <strong>{participant} 님 차례예요</strong>
         <p>다른 사람의 기록이 보이지 않게 이 기기를 넘긴 뒤 시작해 주세요.</p>
       </div>
-      <ScreenCTA icon="play_arrow" testId="participant-turn-start" onClick={onNext}>{participant} 시작하기</ScreenCTA>
+      {abortReason === 'background' && (
+        <p className="info-card" aria-live="polite">앱이 백그라운드로 이동해 이번 기록을 폐기했어요.</p>
+      )}
+      <ScreenCTA testId="participant-turn-start" onClick={onNext}>{participant} 시작하기</ScreenCTA>
     </section>
   )
 }
 
 function RandomGameScreen({ game, participants, onComplete }) {
-  if (game.id === 'fastRandom') {
-    return <FastRandomGameScreen game={game} participants={participants} onComplete={onComplete} />
-  }
-
   return <ReceiptEnvelopeGameScreen game={game} participants={participants} onComplete={onComplete} />
-}
-
-function FastRandomGameScreen({ game, participants, onComplete }) {
-  const [drawing, setDrawing] = useState(false)
-  const [picked, setPicked] = useState('')
-
-  function draw() {
-    setDrawing(true)
-    setPicked('')
-    window.setTimeout(() => {
-      const nextPicked = participants[0]
-      setPicked(nextPicked)
-      setDrawing(false)
-      onComplete(nextPicked)
-    }, 2500)
-  }
-
-  return (
-    <section className="screen random-game-screen fast-random-screen" aria-labelledby="fast-random-title">
-      <TdsTitle centered id="fast-random-title" subtitle="이름 카드가 가운데로 모이면 결과가 공개돼요." title={game.title} />
-      <div className={drawing ? 'fast-random-stage drawing' : 'fast-random-stage'} data-testid="fast-random-stage">
-        <div className="fast-random-particles" aria-hidden="true">
-          {participants.map((participant, index) => <span key={participant} style={{ '--particle': index }}>{participant.slice(0, 1)}</span>)}
-        </div>
-        <div className="fast-random-card">
-          <Icon>{drawing ? 'sync' : 'bolt'}</Icon>
-          <strong data-testid={picked ? 'random-result-name' : undefined}>{picked || (drawing ? '선택 중' : 'READY')}</strong>
-          <small>{drawing ? '2.5초 동안 랜덤 뽑기' : '버튼을 누르면 바로 시작해요'}</small>
-        </div>
-      </div>
-      <Button data-testid="fast-random-draw" color="primary" display="full" size="large" type="button" disabled={drawing} onClick={draw}>
-        <Icon>{drawing ? 'sync' : 'casino'}</Icon> {picked ? '다시 뽑기' : '랜덤 뽑기'}
-      </Button>
-    </section>
-  )
 }
 
 function ReceiptEnvelopeGameScreen({ game, participants, onComplete }) {
   const [selectedIndex, setSelectedIndex] = useState(null)
+  const revealTimerRef = useRef(null)
+  const assignmentResult = useMemo(() => {
+    try {
+      return {
+        assignments: createEnvelopeAssignments(participants),
+        error: '',
+      }
+    } catch {
+      return {
+        assignments: [],
+        error: '안전한 무작위 선택을 사용할 수 없어요. 이전 화면에서 다시 시도해 주세요.',
+      }
+    }
+  }, [participants])
 
-  function openEnvelope() {
-    if (selectedIndex == null) {
+  useEffect(() => () => {
+    if (revealTimerRef.current != null) {
+      window.clearTimeout(revealTimerRef.current)
+    }
+  }, [])
+
+  function selectEnvelope(index) {
+    if (selectedIndex != null || assignmentResult.error) {
       return
     }
 
-    onComplete(participants[selectedIndex % participants.length])
+    setSelectedIndex(index)
+    revealTimerRef.current = window.setTimeout(() => {
+      onComplete(assignmentResult.assignments[index])
+    }, 600)
   }
 
   return (
     <section className="screen random-game-screen receipt-envelope-screen" aria-labelledby="receipt-envelope-title">
-      <TdsTitle centered id="receipt-envelope-title" subtitle="봉투 하나를 고른 뒤 열어 결과를 확인해요." title={game.title} />
+      <TdsTitle centered id="receipt-envelope-title" subtitle="봉투 하나를 고르면 0.6초 뒤 숨겨진 이름이 공개돼요." title={game.title} />
+      <div className="fairness-card" role="note">
+        <Icon>verified_user</Icon>
+        <span>
+          <strong>모든 참여자의 선택 확률은 1/{participants.length}이에요.</strong>
+          <small>이름은 화면이 열릴 때 봉투마다 하나씩 무작위로 배정돼요.</small>
+        </span>
+      </div>
+      {assignmentResult.error && <p className="game-error" role="alert">{assignmentResult.error}</p>}
       <div className="envelope-grid">
         {participants.map((participant, index) => (
           <button
             className={selectedIndex === index ? 'receipt-envelope selected-envelope' : 'receipt-envelope'}
             data-testid={`receipt-envelope-${index + 1}`}
+            disabled={selectedIndex != null || Boolean(assignmentResult.error)}
             key={participant}
             type="button"
-            onClick={() => setSelectedIndex(index)}
+            onClick={() => selectEnvelope(index)}
           >
             <Icon>{selectedIndex === index ? 'mark_email_read' : 'drafts'}</Icon>
             <span>#{index + 1}</span>
-            <small>{selectedIndex === index ? '선택됨' : '영수증 봉투'}</small>
+            <small>{selectedIndex === index ? '봉투를 여는 중' : '영수증 봉투'}</small>
           </button>
         ))}
       </div>
-      <Button data-testid="receipt-envelope-open" color="primary" display="full" size="large" type="button" disabled={selectedIndex == null} onClick={openEnvelope}>
-        <Icon>inventory</Icon> 봉투 열어보기
-      </Button>
+      <p className="sr-only" aria-live="polite">
+        {selectedIndex == null ? '선택할 봉투를 골라 주세요.' : `${selectedIndex + 1}번 봉투를 열고 있어요.`}
+      </p>
     </section>
   )
 }
 
-function RankingGameScreen({ game, participant, playerIndex = 0, previousScores = [], onComplete }) {
+function RankingGameScreen({ game, participant, playerIndex = 0, previousScores = [], onAbort, onComplete }) {
   const [measuredScore, setMeasuredScore] = useState(null)
   const needsCountdown = Boolean(game.requiresCountdownReady)
   const [readyToPlay, setReadyToPlay] = useState(!needsCountdown)
   const [countdown, setCountdown] = useState(3)
+
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'hidden') {
+        onAbort?.('background')
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [onAbort])
 
   useEffect(() => {
     setMeasuredScore(null)
@@ -1356,7 +1269,7 @@ function RankingGameScreen({ game, participant, playerIndex = 0, previousScores 
   }, [countdown, needsCountdown, readyToPlay])
 
   const isPreparing = needsCountdown && !readyToPlay
-  const completionDisabled = game.id === 'movingTarget' && measuredScore == null
+  const completionDisabled = measuredScore == null
 
   return (
     <section className={`screen ranking-game-screen ${game.id}-screen${isPreparing ? ' preparing-countdown' : ''}`} aria-labelledby="ranking-game-title">
@@ -1367,7 +1280,6 @@ function RankingGameScreen({ game, participant, playerIndex = 0, previousScores 
         {readyToPlay && game.id === 'fiveSeconds' && <FiveSecondGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
         {readyToPlay && game.id === 'timingStop' && <TimingStopGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
         {readyToPlay && game.id === 'numberOrder' && <NumberOrderGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
-        {readyToPlay && game.id === 'movingTarget' && <MovingTargetGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
         {readyToPlay && game.id === 'memoryCard' && <MemoryCardGameScreen game={game} participant={participant} onScore={setMeasuredScore} />}
       </div>
       <ScreenCTA disabled={completionDisabled} icon="check" testId="complete-game-turn" onClick={() => onComplete(measuredScore)}>이번 차례 완료</ScreenCTA>
@@ -1377,11 +1289,11 @@ function RankingGameScreen({ game, participant, playerIndex = 0, previousScores 
 }
 
 function RankingGamePreview({ game }) {
-  const memoryTiles = ['A', 'B', 'C', 'A', 'C', 'B']
+  const memoryTiles = ['🍀', '⭐', '🎈', '🍀', '⭐', '🎈']
 
   return (
     <div className={`game-play-stage ${game.id}-stage countdown-preview`} aria-hidden="true">
-      {game.id === 'reaction' && <button className="reaction-pad waiting" type="button" disabled>Wait</button>}
+      {game.id === 'reaction' && <button className="reaction-pad waiting" type="button" disabled>기다려주세요</button>}
       {game.id === 'timingStop' && <div className="timing-track"><i /><b /></div>}
       {game.id === 'memoryCard' && (
         <div className="memory-board">
@@ -1396,10 +1308,17 @@ function GameCountdownOverlay({ count, game }) {
   const descriptions = {
     reaction: '신호가 뜨면 바로 탭하세요...',
     timingStop: '목표 지점에 맞춰 멈출 준비 중...',
+    memoryCard: '카드 위치를 기억할 준비를 해 주세요...',
   }
 
   return (
-    <div className="game-countdown-overlay" data-testid="game-countdown-overlay">
+    <div
+      className="game-countdown-overlay"
+      data-testid="game-countdown-overlay"
+      aria-atomic="true"
+      aria-live="assertive"
+      role="status"
+    >
       <strong>준비하세요!</strong>
       <span data-testid="game-countdown-number">{count}</span>
       <small>{descriptions[game.id] || '곧 게임이 시작돼요...'}</small>
@@ -1413,12 +1332,12 @@ function ReactionGameScreen({ game, participant, previousScores = [], onScore })
   const signalTimerRef = useRef(null)
   const stateCopy = {
     waiting: { headline: '기다려주세요', subline: '신호가 뜨면 바로 탭하세요' },
-    signal: { headline: '지금 누르세요!', subline: 'GO! GO! GO!' },
-    early: { headline: '너무 빨랐어요!', subline: '다시 준비해 주세요' },
+    signal: { headline: '지금 누르세요!', subline: '지금 바로 탭하세요!' },
+    early: { headline: '너무 빨랐어요!', subline: '신호 전 클릭으로 꼴등 처리돼요.' },
     done: { headline: result ? `${(result.reactionMs / 1000).toFixed(3)}초` : '', subline: '기록 완료' },
   }
   const currentCopy = stateCopy[state] || stateCopy.waiting
-  const actionIcon = state === 'waiting' ? 'hourglass_empty' : 'touch_app'
+  const actionIcon = state === 'waiting' ? 'hourglass_empty' : state === 'early' ? 'block' : 'touch_app'
   const reactionStats = result ? getReactionResultStats(result.reactionMs, previousScores) : null
 
   function armSignal() {
@@ -1428,9 +1347,9 @@ function ReactionGameScreen({ game, participant, previousScores = [], onScore })
 
     setState('waiting')
     setResult(null)
-    const signalDelay = 3000 + Math.random() * 2000
+    const signalDelay = getReactionDelayMs()
     signalTimerRef.current = window.setTimeout(() => {
-      signalAtRef.current = Date.now()
+      signalAtRef.current = performance.now()
       setState('signal')
     }, signalDelay)
   }
@@ -1445,17 +1364,30 @@ function ReactionGameScreen({ game, participant, previousScores = [], onScore })
   }, [participant])
 
   function tap() {
-    if (state === 'done') {
+    if (state === 'done' || state === 'early') {
       return
     }
 
     if (state !== 'signal') {
+      if (signalTimerRef.current) {
+        window.clearTimeout(signalTimerRef.current)
+        signalTimerRef.current = null
+      }
+
       setState('early')
-      setResult(null)
+      setResult({ earlyTap: true })
+      onScore(createMeasuredGameScore({
+        detail: { earlyTap: true },
+        displayScore: '신호 전 클릭',
+        gameId: game.id,
+        metric: earlyReactionRankMetric,
+        participant,
+        rawScore: earlyReactionRankMetric,
+      }))
       return
     }
 
-    const reactionMs = Math.max(0, Date.now() - signalAtRef.current)
+    const reactionMs = Math.max(0, performance.now() - signalAtRef.current)
     setState('done')
     setResult({ reactionMs })
     onScore(createMeasuredGameScore({ detail: { reactionMs }, displayScore: reactionMs, gameId: game.id, metric: reactionMs, participant, rawScore: reactionMs }))
@@ -1471,14 +1403,14 @@ function ReactionGameScreen({ game, participant, previousScores = [], onScore })
         </span>
         <i aria-hidden="true" />
       </div>
-      <button className={`reaction-pad ${state}`} data-testid="reaction-action" type="button" onClick={tap}>
+      <button className={`reaction-pad ${state}`} data-testid="reaction-action" type="button" disabled={state === 'done' || state === 'early'} onClick={tap}>
         <Icon>{actionIcon}</Icon>
       </button>
       {state === 'done' && reactionStats ? (
-        <div className="reaction-result-panel">
+        <div className="reaction-result-panel" data-testid="reaction-result-panel" aria-live="polite">
           <span className="reaction-result-icon"><Icon>bolt</Icon></span>
           <strong>{(result.reactionMs / 1000).toFixed(3)}초</strong>
-          <p>아주 빠른 반응이에요!</p>
+          <p>{getReactionFeedback(result.reactionMs)}</p>
           <div className="reaction-result-divider" />
           <div className="reaction-result-stats">
             <span>
@@ -1497,17 +1429,16 @@ function ReactionGameScreen({ game, participant, previousScores = [], onScore })
           <span>{currentCopy.subline}</span>
         </div>
       )}
-      <Button data-testid="reaction-reset" color="dark" size="small" type="button" variant="weak" onClick={armSignal}>다시 준비</Button>
     </div>
   )
 }
 
 function getReactionResultStats(reactionMs, previousScores) {
-  const previousReactionScores = previousScores.filter((score) => score.gameId === 'reaction' && typeof score.metric === 'number')
-  const allMetrics = [...previousReactionScores.map((score) => score.metric), reactionMs]
+  const previousReactionScores = previousScores.filter((score) => score.gameId === 'reaction' && !score.detail?.earlyTap && typeof score.rankMetric === 'number')
+  const allMetrics = [...previousReactionScores.map((score) => score.rankMetric), reactionMs]
   const averageMs = allMetrics.reduce((sum, metric) => sum + metric, 0) / Math.max(1, allMetrics.length)
   const diffSeconds = (reactionMs - averageMs) / 1000
-  const rank = previousReactionScores.filter((score) => score.metric < reactionMs).length + 1
+  const rank = previousReactionScores.filter((score) => score.rankMetric < reactionMs).length + 1
 
   return {
     averageDiffText: formatSignedSeconds(diffSeconds),
@@ -1534,28 +1465,55 @@ function FiveSecondGameScreen({ game, participant, onScore }) {
       return undefined
     }
 
-    const timerId = window.setInterval(() => {
+    const intervalId = window.setInterval(() => {
       setElapsed((Date.now() - startedAt) / 1000)
     }, 50)
+    const autoStopId = window.setTimeout(() => {
+      finish(Date.now())
+    }, 10000)
 
-    return () => window.clearInterval(timerId)
+    return () => {
+      window.clearInterval(intervalId)
+      window.clearTimeout(autoStopId)
+    }
   }, [running, startedAt])
 
   function start() {
+    if (running || result) {
+      return
+    }
+
     const now = Date.now()
     setStartedAt(now)
     setElapsed(0)
-    setResult(null)
     setRunning(true)
   }
 
-  function stop() {
-    const nextElapsed = (Date.now() - startedAt) / 1000
-    const diff = Math.abs(nextElapsed - 5)
-    setElapsed(nextElapsed)
-    setResult({ diff, elapsed: nextElapsed })
+  function finish(finishedAt) {
+    const elapsedMs = Math.min(10000, Math.max(0, finishedAt - startedAt))
+    const nextResult = calculateFiveSecondResult(elapsedMs)
+    setElapsed(nextResult.elapsedMs / 1000)
+    setResult(nextResult)
     setRunning(false)
-    onScore(createMeasuredGameScore({ detail: { diffSeconds: diff, elapsedSeconds: nextElapsed }, displayScore: 'time recorded', gameId: game.id, metric: diff, participant, rawScore: nextElapsed }))
+    onScore(createMeasuredGameScore({
+      detail: {
+        diffMs: nextResult.diffMs,
+        elapsedMs: nextResult.elapsedMs,
+      },
+      displayScore: (nextResult.elapsedMs / 1000).toFixed(3),
+      gameId: game.id,
+      metric: nextResult.rankMetric,
+      participant,
+      rawScore: nextResult.elapsedMs / 1000,
+    }))
+  }
+
+  function stop() {
+    if (!running || result) {
+      return
+    }
+
+    finish(Date.now())
   }
 
   return (
@@ -1565,10 +1523,10 @@ function FiveSecondGameScreen({ game, participant, onScore }) {
         <span>5.000</span>
       </div>
       <div className="game-action-row">
-        <Button data-testid="five-second-start" color="primary" size="large" type="button" variant="weak" disabled={running} onClick={start}>START</Button>
-        <Button data-testid="five-second-stop" color="primary" size="large" type="button" disabled={!running} onClick={stop}>STOP</Button>
+        <Button data-testid="five-second-start" color="primary" size="large" type="button" variant="weak" disabled={running || result != null} onClick={start}>시작</Button>
+        <Button data-testid="five-second-stop" color="primary" size="large" type="button" disabled={!running || result != null} onClick={stop}>멈추기</Button>
       </div>
-      {result && <strong className="game-live-score">diff {result.diff.toFixed(3)}s</strong>}
+      {result && <strong className="game-live-score">오차 {(result.diffMs / 1000).toFixed(3)}초</strong>}
     </div>
   )
 }
@@ -1576,39 +1534,128 @@ function FiveSecondGameScreen({ game, participant, onScore }) {
 function TimingStopGameScreen({ game, participant, onScore }) {
   const [position, setPosition] = useState(0)
   const [done, setDone] = useState(false)
+  const [result, setResult] = useState(null)
+  const frameRef = useRef(null)
+  const positionRef = useRef(0)
+  const direction = useMemo(() => getTimingStartDirection(), [participant])
 
   useEffect(() => {
     if (done) {
       return undefined
     }
 
-    const timerId = window.setInterval(() => setPosition((current) => (current + 7) % 101), 80)
-    return () => window.clearInterval(timerId)
-  }, [done])
+    const startedAt = performance.now()
+
+    function animate(timestamp) {
+      const nextPosition = calculateTimingStopPosition(timestamp - startedAt, 1600, direction)
+      positionRef.current = nextPosition
+      setPosition(nextPosition)
+      frameRef.current = window.requestAnimationFrame(animate)
+    }
+
+    frameRef.current = window.requestAnimationFrame(animate)
+
+    return () => {
+      if (frameRef.current != null) {
+        window.cancelAnimationFrame(frameRef.current)
+      }
+    }
+  }, [direction, done, participant])
 
   function stop() {
-    const distance = Math.abs(position - 50)
+    if (done) {
+      return
+    }
+
+    const finalPosition = positionRef.current
+    const timingResult = calculateTimingResult(finalPosition)
+    const grade = getTimingGrade(timingResult.scoreValue)
     setDone(true)
-    onScore(createMeasuredGameScore({ detail: { distance, position }, displayScore: `${distance}pt`, gameId: game.id, metric: distance, participant, rawScore: distance }))
+    setPosition(finalPosition)
+    setResult({ ...timingResult, grade })
+    onScore(createMeasuredGameScore({
+      detail: { ...timingResult, grade },
+      displayScore: timingResult.scoreValue.toFixed(1),
+      gameId: game.id,
+      metric: timingResult.rankMetric,
+      participant,
+      rawScore: timingResult.scoreValue,
+    }))
   }
 
   return (
     <div className="game-play-stage timing-stage">
-      <div className="timing-track"><i style={{ left: `${position}%` }} /><b /></div>
-      <strong className="game-live-score">target distance: {Math.abs(position - 50)}</strong>
+      <div className="timing-turn-card">
+        <span className="avatar mini">{participant.slice(0, 1)}</span>
+        <span>
+          <small>현재 순서</small>
+          <strong>{participant}님의 차례</strong>
+        </span>
+        <i aria-hidden="true" />
+      </div>
+      <div className="timing-arena">
+        <div className="timing-track">
+          <span className="timing-target-zone" />
+          <span className="timing-center-line" />
+          <span className="timing-pointer" style={{ left: `${position}%` }} />
+        </div>
+        <div className="timing-status-copy">
+          <strong>{result ? `${result.scoreValue.toFixed(1)}점` : '중앙에 맞춰 멈춰요'}</strong>
+          <span>{result ? `중앙에서 ${result.distance.toFixed(1)}pt 차이` : '포인터가 타깃 중앙에 겹치는 순간을 노려보세요.'}</span>
+        </div>
+      </div>
+      {result && (
+        <div className="timing-result-panel" data-testid="timing-result-panel" aria-live="polite">
+          <span className={`timing-grade-badge ${result.grade.toLowerCase()}`}>{getTimingGradeLabel(result.grade)}</span>
+          <span>
+            <small>최종 점수</small>
+            <strong>{result.scoreValue.toFixed(1)}점</strong>
+          </span>
+          <span>
+            <small>오차</small>
+            <strong>중앙에서 {result.distance.toFixed(1)}pt 차이</strong>
+          </span>
+        </div>
+      )}
       <Button data-testid="timing-stop" color="primary" display="full" size="large" type="button" disabled={done} onClick={stop}>멈추기</Button>
     </div>
   )
 }
 
+function getTimingGrade(scoreValue) {
+  if (scoreValue >= 99) {
+    return 'PERFECT'
+  }
+
+  if (scoreValue >= 90) {
+    return 'GREAT'
+  }
+
+  if (scoreValue >= 70) {
+    return 'GOOD'
+  }
+
+  return 'MISS'
+}
+
 function NumberOrderGameScreen({ game, participant, onScore }) {
-  const tiles = [3, 1, 7, 2, 9, 4, 6, 5, 8]
+  const layoutResult = useMemo(() => {
+    try {
+      return { error: '', tiles: createBalancedNumberLayout() }
+    } catch {
+      return { error: '균형 잡힌 숫자 배열을 준비하지 못했어요.', tiles: [] }
+    }
+  }, [participant])
   const [startedAt, setStartedAt] = useState(0)
   const [nextNumber, setNextNumber] = useState(1)
   const [mistakes, setMistakes] = useState(0)
   const [done, setDone] = useState(false)
 
   function start() {
+    if (startedAt > 0 || done || layoutResult.error) {
+      return
+    }
+
     setStartedAt(Date.now())
     setNextNumber(1)
     setMistakes(0)
@@ -1640,82 +1687,58 @@ function NumberOrderGameScreen({ game, participant, onScore }) {
 
   return (
     <div className="game-play-stage number-order-stage">
-      <Button data-testid="number-start" color="primary" size="small" type="button" variant="weak" onClick={start}>START</Button>
+      <Button data-testid="number-start" color="primary" disabled={startedAt > 0 || done || Boolean(layoutResult.error)} size="small" type="button" variant="weak" onClick={start}>시작</Button>
+      {layoutResult.error && <p className="game-error" role="alert">{layoutResult.error}</p>}
       <div className="number-board">
-        {tiles.map((tile) => (
+        {layoutResult.tiles.map((tile) => (
           <button data-testid={`number-tile-${tile}`} key={tile} type="button" disabled={done || (startedAt > 0 && tile < nextNumber)} onClick={() => press(tile)}>
             {tile}
           </button>
         ))}
       </div>
-      <strong className="game-live-score">next: {nextNumber} / mistakes: {mistakes}{done ? ' / penalty applied' : ''}</strong>
-    </div>
-  )
-}
-
-function MovingTargetGameScreen({ game, participant, onScore }) {
-  const [running, setRunning] = useState(false)
-  const [hits, setHits] = useState(0)
-  const [done, setDone] = useState(false)
-  const hitsRef = useRef(0)
-
-  function start() {
-    setRunning(true)
-    setDone(false)
-    hitsRef.current = 0
-    setHits(0)
-    window.setTimeout(() => {
-      const finalHits = hitsRef.current
-      setRunning(false)
-      setDone(true)
-      onScore(createMeasuredGameScore({ detail: { hits: finalHits }, displayScore: `score ${finalHits}`, gameId: game.id, metric: -finalHits, participant, rawScore: finalHits }))
-    }, 5000)
-  }
-
-  function hitTarget() {
-    if (!running) {
-      return
-    }
-
-    hitsRef.current += 1
-    setHits(hitsRef.current)
-  }
-
-  return (
-    <div className="game-play-stage moving-target-stage">
-      <div className="target-hud">hits: {hits}</div>
-      <div className="target-arena">
-        {[0, 1, 2, 3, 4].map((target) => (
-          <button data-testid="moving-target" key={target} type="button" disabled={!running} style={{ '--target': target }} onPointerDown={hitTarget}>
-            <Icon>radio_button_checked</Icon>
-          </button>
-        ))}
-      </div>
-      {!done && <Button data-testid="target-start" color="primary" display="full" size="large" type="button" disabled={running} onClick={start}>START</Button>}
-      {done && <strong className="game-live-score">{hits} hits</strong>}
+      <strong className="game-live-score">
+        다음 숫자: {Math.min(nextNumber, 9)} / 실수: {mistakes}회{done ? ' / 벌점 반영 완료' : ''}
+      </strong>
     </div>
   )
 }
 
 function MemoryCardGameScreen({ game, participant, onScore }) {
-  const cards = ['A', 'B', 'C', 'A', 'C', 'B']
+  const deckResult = useMemo(() => {
+    try {
+      return { cards: createMemoryDeck(), error: '' }
+    } catch {
+      return { cards: [], error: '기억 카드 구성을 준비하지 못했어요.' }
+    }
+  }, [participant])
   const [memorizing, setMemorizing] = useState(true)
   const [startedAt, setStartedAt] = useState(Date.now())
   const [selected, setSelected] = useState([])
   const [matched, setMatched] = useState([])
   const [attempts, setAttempts] = useState(0)
+  const [mismatches, setMismatches] = useState(0)
+  const hideMismatchTimerRef = useRef(null)
 
   useEffect(() => {
+    if (deckResult.error) {
+      return undefined
+    }
+
     const timerId = window.setTimeout(() => {
       setStartedAt(Date.now())
       setMemorizing(false)
     }, 3000)
 
-    return () => window.clearTimeout(timerId)
-  }, [participant])
+    return () => {
+      window.clearTimeout(timerId)
+      if (hideMismatchTimerRef.current != null) {
+        window.clearTimeout(hideMismatchTimerRef.current)
+      }
+    }
+  }, [deckResult.error, participant])
 
   function flip(index) {
-    if (memorizing || matched.includes(index) || selected.includes(index) || selected.length >= 2) {
+    if (deckResult.error || memorizing || matched.includes(index) || selected.includes(index) || selected.length >= 2) {
       return
     }
 
@@ -1730,29 +1753,49 @@ function MemoryCardGameScreen({ game, participant, onScore }) {
     const nextAttempts = attempts + 1
     setAttempts(nextAttempts)
 
-    if (cards[first] === cards[second]) {
+    if (deckResult.cards[first] === deckResult.cards[second]) {
       const nextMatched = [...matched, first, second]
       setMatched(nextMatched)
       setSelected([])
-      if (nextMatched.length === cards.length) {
+      if (nextMatched.length === deckResult.cards.length) {
         const elapsedMs = Date.now() - startedAt
-        const metric = elapsedMs + nextAttempts * 250
-        onScore(createMeasuredGameScore({ detail: { attempts: nextAttempts, elapsedMs }, displayScore: `${(metric / 1000).toFixed(3)}s`, gameId: game.id, metric, participant, rawScore: metric }))
+        const penaltyMs = mismatches * 500
+        const metric = elapsedMs + penaltyMs
+        onScore(createMeasuredGameScore({
+          detail: { attempts: nextAttempts, elapsedMs, mismatches, penaltyMs },
+          displayScore: (metric / 1000).toFixed(3),
+          gameId: game.id,
+          metric,
+          participant,
+          rawScore: metric,
+        }))
       }
       return
     }
 
-    window.setTimeout(() => setSelected([]), 400)
+    setMismatches((current) => current + 1)
+    hideMismatchTimerRef.current = window.setTimeout(() => setSelected([]), 400)
   }
 
   return (
     <div className="game-play-stage memory-card-stage">
-      <div className="memory-status">{memorizing ? 'Memorize' : `attempts: ${attempts}`}</div>
+      <div className="memory-status" aria-live="polite">
+        {memorizing ? '카드 위치를 기억하세요' : `시도 ${attempts}회 · 오답 ${mismatches}회`}
+      </div>
+      {deckResult.error && <p className="game-error" role="alert">{deckResult.error}</p>}
       <div className="memory-board">
-        {cards.map((card, index) => {
+        {deckResult.cards.map((card, index) => {
           const visible = memorizing || selected.includes(index) || matched.includes(index)
           return (
-            <button className={visible ? 'memory-card flipped' : 'memory-card'} data-testid={`memory-card-${index}`} key={`${card}-${index}`} type="button" disabled={matched.includes(index)} onClick={() => flip(index)}>
+            <button
+              aria-label={visible ? `${card} 카드` : `${index + 1}번 뒤집힌 카드`}
+              className={visible ? 'memory-card flipped' : 'memory-card'}
+              data-testid={`memory-card-${index}`}
+              key={`${card}-${index}`}
+              type="button"
+              disabled={memorizing || matched.includes(index) || selected.length >= 2}
+              onClick={() => flip(index)}
+            >
               {visible ? card : '?'}
             </button>
           )
@@ -1762,34 +1805,13 @@ function MemoryCardGameScreen({ game, participant, onScore }) {
   )
 }
 
-function LegacyRankingGameScreen({ game, participant, onComplete }) {
-  const numberTiles = game.id === 'numberOrder' ? [1, 4, 2, 6, 3, 5] : []
-  const memoryTiles = game.id === 'memoryCard' ? ['A', 'B', 'C', 'A', 'C', 'B'] : []
-
-  return (
-    <section className={`screen ranking-game-screen ${game.id}-screen`} aria-labelledby="ranking-game-title">
-      <TdsTitle centered id="ranking-game-title" subtitle={`${participant} 님의 기록을 측정해요.`} title={game.title} />
-      <div className="game-play-stage">
-        {game.id === 'reaction' && <button className="reaction-pad" type="button">초록색이 되면 탭</button>}
-        {game.id === 'fiveSeconds' && <div className="five-second-dial"><strong>5.000</strong><span>STOP</span></div>}
-        {game.id === 'timingStop' && <div className="timing-track"><i /><b /></div>}
-        {game.id === 'numberOrder' && <div className="number-board">{numberTiles.map((tile) => <button key={tile} type="button">{tile}</button>)}</div>}
-        {game.id === 'movingTarget' && <div className="target-arena"><button type="button" aria-label="움직이는 표적"><Icon>radio_button_checked</Icon></button></div>}
-        {game.id === 'memoryCard' && <div className="memory-board">{memoryTiles.map((tile, index) => <button key={`${tile}-${index}`} type="button">{tile}</button>)}</div>}
-      </div>
-      <div className="info-card"><Icon>touch_app</Icon> 데모 플레이에서는 버튼을 누르면 이번 차례 기록이 저장돼요.</div>
-      <ScreenCTA icon="check" onClick={onComplete}>이번 차례 완료</ScreenCTA>
-    </section>
-  )
-}
-
 function RankingResultScreen({ game, scores, settlementMode, onNext }) {
   const targetScores = getSettlementTargetScores(scores, settlementMode)
   const targetScore = targetScores[0]
   const targetRankLabel = settlementMode === 'extra' ? '꼴등' : '1등'
 
   return (
-    <section className="screen ranking-result-screen" aria-labelledby="ranking-result-title">
+    <section className="screen ranking-result-screen" aria-labelledby="ranking-result-title" aria-live="polite">
       <TdsTitle centered id="ranking-result-title" subtitle={`${game.title} 결과`} title="전체 순위 결과" />
       <div className="winner-summary">
         <span className="winner-medal">{targetRankLabel}</span>
@@ -1816,16 +1838,21 @@ function TieRematchScreen({ settlementMode, tiedScores, onStartRematch }) {
   return (
     <section className="screen tie-rematch-screen" aria-labelledby="tie-rematch-title">
       <TdsTitle centered id="tie-rematch-title" subtitle="동점인 참여자끼리 한 번 더 대결해 순위를 정해요." title="동점자가 나왔어요!" />
-      <div className={tiedScores.length > 2 ? 'tie-rematch-matchup multi' : 'tie-rematch-matchup'}>
-        {tiedScores.map((score, index) => (
-          <div className="tie-rematch-player-card" data-testid="tie-rematch-player-card" key={score.participant}>
+      <div className="tie-rematch-matchup multi" data-testid="tie-rematch-matchup">
+        <div className="tie-rematch-summary">
+          <Icon>groups</Icon>
+          <span>
+            <strong>재대결 대상 {tiedScores.length}명</strong>
+            <small>대상자 전체 목록</small>
+          </span>
+        </div>
+        {tiedScores.map((score) => (
+          <div className="tie-rematch-player-card compact" data-testid="tie-rematch-player-card" key={score.participant}>
             <span className="avatar">{score.participant.slice(0, 1)}</span>
-            <span>
-              <small>PARTICIPANT</small>
+            <span className="tie-rematch-player-copy">
+              <small>{outcomeLabel} 후보</small>
               <strong>{score.participant}</strong>
             </span>
-            <i aria-label={`${score.participant} ${outcomeLabel} 후보`}><Icon>person</Icon></i>
-            {index === 0 && <b className="tie-versus">VS</b>}
           </div>
         ))}
       </div>
@@ -1841,20 +1868,35 @@ function TieRematchScreen({ settlementMode, tiedScores, onStartRematch }) {
   )
 }
 
-function RouletteScreen({ amount, participants, settlementMode, spinning, onSpin }) {
+function RouletteScreen({ amount, duration, error, participants, rotation, settlementMode, spinning, onSpin }) {
+  const gradient = createRouletteGradient(participants.length)
+
   return (
     <section className="screen roulette-screen" aria-labelledby="roulette-title">
       <TdsTitle centered id="roulette-title" subtitle={spinning ? '잠시만 기다려 주세요. 정산 대상자를 고르고 있어요.' : `${getSettlementModeLabel(settlementMode)} 대상자를 룰렛으로 정해요.`} title="오늘의 정산 결과는?" />
+      <div className="fairness-card" role="note">
+        <Icon>verified_user</Icon>
+        <span>
+          <strong>모든 참여자의 선택 확률은 1/{participants.length}이에요.</strong>
+          <small>결과를 먼저 확정한 뒤 룰렛이 선택된 구간에 멈춰요.</small>
+        </span>
+      </div>
+      {error && <p className="game-error" role="alert">{error}</p>}
       <div className="roulette-stage">
         <div className="roulette-pointer" aria-hidden="true"><Icon>arrow_drop_down</Icon></div>
         <div
           className={spinning ? 'roulette-wheel spinning' : 'roulette-wheel'}
           aria-label={`${participants.join(', ')} 룰렛`}
-          style={{ '--participant-count': participants.length }}
+          style={{
+            '--participant-count': participants.length,
+            background: `radial-gradient(circle at 50% 50%, var(--surface) 0 27%, transparent 28%), ${gradient}`,
+            transform: `rotate(${rotation}deg)`,
+            transitionDuration: `${duration}ms`,
+          }}
         >
           <div className="roulette-core">
-            <Icon>{spinning ? 'sync' : 'casino'}</Icon>
-            <strong>{spinning ? '선택 중' : 'READY'}</strong>
+            <Icon>{spinning ? 'sync' : 'published_with_changes'}</Icon>
+            <strong aria-live="polite">{spinning ? '선택 중' : '준비 완료'}</strong>
           </div>
           {participants.map((participant, index) => (
             <span key={participant} style={{ '--slot': index }}>{participant}</span>
@@ -1868,9 +1910,42 @@ function RouletteScreen({ amount, participants, settlementMode, spinning, onSpin
       <div className="roulette-members">
         {participants.map((participant) => <span key={participant}>{participant}</span>)}
       </div>
-      <ScreenCTA disabled={spinning} icon={spinning ? 'sync' : 'refresh'} onClick={onSpin}>{spinning ? '룰렛 돌리는 중' : '룰렛 돌리기'}</ScreenCTA>
+      <div className="roulette-draw-actions">
+        <Button
+          data-testid="roulette-wheel-draw"
+          color="primary"
+          disabled={spinning || Boolean(error)}
+          display="full"
+          size="large"
+          type="button"
+          onClick={() => onSpin('wheel')}
+        >
+          <Icon>{spinning ? 'sync' : 'refresh'}</Icon> {spinning ? '룰렛 돌리는 중' : '룰렛 돌리기'}
+        </Button>
+        <Button
+          data-testid="roulette-quick-draw"
+          color="primary"
+          disabled={spinning || Boolean(error)}
+          display="full"
+          size="large"
+          type="button"
+          variant="weak"
+          onClick={() => onSpin('quick')}
+        >
+          <Icon>bolt</Icon> 빠르게 뽑기
+        </Button>
+      </div>
     </section>
   )
+}
+
+function getTimingGradeLabel(grade) {
+  return {
+    PERFECT: '정확',
+    GREAT: '훌륭',
+    GOOD: '좋음',
+    MISS: '아쉬움',
+  }[grade] || '기록 완료'
 }
 
 function RouletteResultScreen({ amount, canRetry, settlementMode, settlementResult, winner, onRetry, onNext }) {
@@ -1880,7 +1955,7 @@ function RouletteResultScreen({ amount, canRetry, settlementMode, settlementResu
   const otherLine = settlementResult.lineItems.find((item) => item.participant !== winner)
 
   return (
-    <section className="screen roulette-result-screen" aria-labelledby="roulette-result-title">
+    <section className="screen roulette-result-screen" aria-labelledby="roulette-result-title" aria-live="polite">
       <div className="winner-illustration">
         <div className="winner-artwork" role="img" aria-label={`${winner} 님 면제 확정 이미지`}>
           <img alt="" aria-hidden="true" src={settlementCompleteImage} />
@@ -1929,9 +2004,9 @@ function RandomResultScreen({ amount, canRetry, game, settlementMode, settlement
   const otherLine = settlementResult.lineItems.find((item) => item.participant !== winner)
 
   return (
-    <section className="screen roulette-result-screen random-result-screen" aria-labelledby="random-result-title">
+    <section className="screen roulette-result-screen random-result-screen" aria-labelledby="random-result-title" aria-live="polite">
       <div className="winner-illustration">
-        <div className="winner-artwork" role="img" aria-label={`${winner} ?쒕뜡 寃곌낵 ?대?吏`}>
+        <div className="winner-artwork" role="img" aria-label={`${winner} 님 추첨 결과 이미지`}>
           <img alt="" aria-hidden="true" src={settlementCompleteImage} />
         </div>
         <div className="confetti-rain" data-testid="confetti-rain" aria-hidden="true">
@@ -1960,14 +2035,37 @@ function RandomResultScreen({ amount, canRetry, game, settlementMode, settlement
   )
 }
 
-function FinalResultScreen({ amount, game, isGameResult = false, settlementResult, settlementTitle, onRestart, onShare }) {
+function FinalResultScreen({ amount, game, isGameResult = false, participants, settlementResult, settlementTitle, onRestart, onShare }) {
+  const { openToast } = useWebToast({ exitOnUnmount: false })
+  const [imageSaving, setImageSaving] = useState(false)
+
+  async function handleSaveImage() {
+    setImageSaving(true)
+    try {
+      const payload = buildSharePayload({
+        amount,
+        participants,
+        settlementResult,
+        settlementTitle,
+      })
+      const result = await saveSettlementImage(payload)
+      if (result.mode !== 'canceled') {
+        openToast('정산 이미지를 저장하거나 공유했어요.', { duration: 1800 })
+      }
+    } catch {
+      openToast('이미지를 저장하지 못했어요.', { duration: 2200 })
+    } finally {
+      setImageSaving(false)
+    }
+  }
+
   return (
     <section className="screen final-screen" aria-labelledby="final-title">
       <div className="success-icon"><Icon>check_circle</Icon></div>
       <TdsTitle centered id="final-title" subtitle="총 정산 금액" title={isGameResult ? '게임 정산이 완료됐어요' : '정산이 완료됐어요'} />
       <strong className="settlement-title">{settlementTitle}</strong>
       <strong className="big-amount">{formatWon(amount)}</strong>
-      <span className="mode-badge"><Icon>{isGameResult ? 'sports_esports' : 'casino'}</Icon> {isGameResult ? `${game?.title || '게임'} ${settlementResult.modeLabel} 적용` : `${settlementResult.modeLabel} 방식 적용`}</span>
+      <span className="mode-badge"><Icon>{isGameResult ? 'sports_esports' : 'payments'}</Icon> {isGameResult ? `${game?.title || '게임'} ${settlementResult.modeLabel} 적용` : `${settlementResult.modeLabel} 방식 적용`}</span>
       <ListHeader
         className="compact-list-header"
         title={<ListHeader.TitleParagraph>참여자별 금액</ListHeader.TitleParagraph>}
@@ -1985,7 +2083,7 @@ function FinalResultScreen({ amount, game, isGameResult = false, settlementResul
       </ul>
       <div className="celebration-card"><Icon>celebration</Icon> {settlementResult.summaryText}</div>
       <div className="button-row">
-        <Button color="primary" display="full" size="large" type="button" variant="weak"><Icon>image</Icon> 이미지로 저장</Button>
+        <Button color="primary" disabled={imageSaving} display="full" size="large" type="button" variant="weak" onClick={handleSaveImage}><Icon>image</Icon> {imageSaving ? '이미지 만드는 중' : '이미지로 저장'}</Button>
         <Button color="primary" display="full" size="large" type="button" variant="weak" onClick={onRestart}><Icon>refresh</Icon> 새로운 정산</Button>
       </div>
       <ScreenCTA icon="share" onClick={onShare}>결과 공유하기</ScreenCTA>
@@ -2049,12 +2147,12 @@ function DetailScreen({ amount, splitAmount, winner, onBack, onShare }) {
               className={participant === winner ? 'surface-row exempted' : 'surface-row'}
               key={participant}
               left={<span className="avatar">{participant.slice(0, 1)}</span>}
-              contents={<TextStack description={participant === winner ? '면제 당첨!' : participant === '지훈' ? '입금 대기' : '입금 완료'} title={participant} />}
+              contents={<TextStack description={participant === winner ? '면제 대상' : participant === '지훈' ? '입금 대기' : '입금 완료'} title={participant} />}
               right={<b>{participant === winner ? '0원' : formatWon(splitAmount)}</b>}
             />
           ))}
         </ul>
-        <blockquote>"{winner}님의 운이 폭발했던 그 날!"<br />총 1명의 면제자가 선정되었습니다.</blockquote>
+        <blockquote>{winner} 님이 면제 대상이었던 정산이에요.<br />총 1명의 면제 대상자가 정해졌습니다.</blockquote>
         <Button color="danger" display="full" size="large" type="button"><Icon>delete</Icon> 정산 내역 삭제</Button>
         <ScreenCTA icon="share" onClick={onShare}>결과 다시 공유하기</ScreenCTA>
       </section>
@@ -2113,10 +2211,12 @@ function ShareSheet({ amount, open, participants, settlementResult, settlementTi
   const payload = buildSharePayload({ amount, participants, settlementResult, settlementTitle })
 
   async function runShareAction(action, successMessage, errorMessage) {
-    setShareActionPending(action)
+    setShareActionPending(true)
     try {
-      await action()
-      openToast(successMessage, { duration: 1800 })
+      const result = await action()
+      if (result?.mode !== 'canceled') {
+        openToast(successMessage, { duration: 1800 })
+      }
     } catch {
       openToast(errorMessage, { duration: 2200 })
     } finally {
@@ -2139,17 +2239,7 @@ function ShareSheet({ amount, open, participants, settlementResult, settlementTi
 
   function handleSaveImage() {
     return runShareAction(async () => {
-      const data = await createSettlementImageBase64(payload)
-
-      try {
-        await saveBase64Data({
-          data,
-          fileName: payload.fileName,
-          mimeType: 'image/png',
-        })
-      } catch {
-        downloadBase64Image({ data, fileName: payload.fileName })
-      }
+      return saveSettlementImage(payload)
     }, '정산 이미지를 저장했어요.', '이미지를 저장하지 못했어요.')
   }
 
@@ -2204,7 +2294,7 @@ function ShareSheet({ amount, open, participants, settlementResult, settlementTi
               variant="weak"
               onClick={onClick}
             >
-              <Icon>{shareActionPending === onClick ? 'sync' : icon}</Icon>
+              <Icon>{shareActionPending ? 'sync' : icon}</Icon>
               {label}
             </Button>
           ))}
