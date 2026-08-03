@@ -72,13 +72,13 @@ test('number layouts contain 1 through 9 with a path distance of 16', () => {
   expect(getNumberPathDistance(layout)).toBe(16)
 })
 
-test('memory deck contains three different icon pairs', () => {
+test('memory deck contains six different icon pairs', () => {
   const deck = createMemoryDeck(sequenceSource(Array(100).fill(0)))
   const counts = deck.reduce((result, icon) => ({
     ...result,
     [icon]: (result[icon] || 0) + 1,
   }), {})
 
-  expect(deck).toHaveLength(6)
-  expect(Object.values(counts)).toEqual([2, 2, 2])
+  expect(deck).toHaveLength(12)
+  expect(Object.values(counts)).toEqual([2, 2, 2, 2, 2, 2])
 })

@@ -73,10 +73,10 @@ export const gameCatalog = [
     icon: 'style',
     title: '기억력 카드 게임',
     badge: '순위 게임',
-    description: '잠깐 본 카드 위치를 기억해 같은 그림을 찾아요.',
+    description: '잠깐 본 12장 카드 위치를 기억해 6쌍의 같은 그림을 찾아요.',
     rule: '완료 시간이 짧을수록 높은 순위예요. 잘못 맞추면 0.5초가 추가돼요.',
     recommendedPlayers: { min: 2, max: 6 },
-    estimatedSecondsPerPlayer: 18,
+    estimatedSecondsPerPlayer: 30,
     requiresCountdownReady: true,
   },
 ]

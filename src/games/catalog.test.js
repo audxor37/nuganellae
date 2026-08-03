@@ -24,4 +24,11 @@ describe('game catalog', () => {
     expect(getGameById('fastRandom').id).toBe('roulette')
     expect(getGameById('movingTarget').id).toBe('roulette')
   })
+
+  test('describes the twelve-card memory challenge and its longer play time', () => {
+    expect(getGameById('memoryCard')).toMatchObject({
+      description: expect.stringMatching(/12장.*6쌍/),
+      estimatedSecondsPerPlayer: 30,
+    })
+  })
 })

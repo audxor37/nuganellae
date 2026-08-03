@@ -216,6 +216,13 @@ test('timing stop styles use an arcade result layout with a distinct target zone
   expect(styles).toMatch(/\.timing-grade-badge\s*\{[^}]*overflow-wrap:\s*anywhere/s)
 })
 
+test('memory cards use four columns while the number board keeps three', () => {
+  const styles = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8')
+
+  expect(styles).toMatch(/\.number-board\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*1fr\)/s)
+  expect(styles).toMatch(/\.memory-board\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*1fr\)/s)
+})
+
 test('renders the Stitch start screen copy and primary action', () => {
   renderApp()
 
@@ -1455,22 +1462,32 @@ test('memory card game completes real pairs and records attempts', async () => {
   expect(screen.getByTestId('game-countdown-overlay')).toBeInTheDocument()
   expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
   expect(screen.queryByText('카드 위치를 기억하세요')).not.toBeInTheDocument()
+  expect(document.querySelectorAll('.countdown-preview .memory-card')).toHaveLength(12)
 
   await advanceGameCountdown()
   expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
+  expect(screen.getAllByTestId(/^memory-card-/)).toHaveLength(12)
+  expect(screen.getByTestId('memory-card-0')).toBeDisabled()
 
   await act(async () => {
     vi.advanceTimersByTime(3100)
   })
   expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
+  expect(screen.getByTestId('memory-card-0')).toBeEnabled()
 
   fireEvent.click(screen.getByTestId('memory-card-0'))
-  fireEvent.click(screen.getByTestId('memory-card-3'))
+  fireEvent.click(screen.getByTestId('memory-card-6'))
   fireEvent.click(screen.getByTestId('memory-card-1'))
-  fireEvent.click(screen.getByTestId('memory-card-4'))
+  fireEvent.click(screen.getByTestId('memory-card-7'))
   fireEvent.click(screen.getByTestId('memory-card-2'))
+  fireEvent.click(screen.getByTestId('memory-card-8'))
+  fireEvent.click(screen.getByTestId('memory-card-3'))
+  fireEvent.click(screen.getByTestId('memory-card-9'))
+  fireEvent.click(screen.getByTestId('memory-card-4'))
+  fireEvent.click(screen.getByTestId('memory-card-10'))
   fireEvent.click(screen.getByTestId('memory-card-5'))
+  fireEvent.click(screen.getByTestId('memory-card-11'))
 
-  expect(screen.getByText(/시도 3회 · 오답 0회/)).toBeInTheDocument()
+  expect(screen.getByText(/시도 6회 · 오답 0회/)).toBeInTheDocument()
   expect(screen.getByTestId('complete-game-turn')).not.toBeDisabled()
 })

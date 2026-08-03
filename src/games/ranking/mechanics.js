@@ -111,6 +111,6 @@ export function createBalancedNumberLayout(randomSource) {
 }
 
 export function createMemoryDeck(randomSource) {
-  const selectedIcons = shuffle(memoryIconPool, randomSource).slice(0, 3)
+  const selectedIcons = shuffle(memoryIconPool, randomSource).slice(0, 6)
   return shuffle([...selectedIcons, ...selectedIcons], randomSource)
 }

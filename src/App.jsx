@@ -1289,7 +1289,7 @@ function RankingGameScreen({ game, participant, playerIndex = 0, previousScores 
 }
 
 function RankingGamePreview({ game }) {
-  const memoryTiles = ['🍀', '⭐', '🎈', '🍀', '⭐', '🎈']
+  const memoryTiles = ['🍀', '⭐', '🎈', '🚀', '🍉', '🎵', '🍀', '⭐', '🎈', '🚀', '🍉', '🎵']
 
   return (
     <div className={`game-play-stage ${game.id}-stage countdown-preview`} aria-hidden="true">
