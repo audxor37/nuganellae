@@ -1622,14 +1622,14 @@ function ParticipantTurnScreen({ abortReason, participant, progress, onNext }) {
     <section className="screen participant-turn-screen" aria-labelledby="turn-title">
       <TdsTitle centered id="turn-title" subtitle={`${progress} 플레이어`} title="참여자 전환" />
       <div className="turn-card" aria-atomic="true" aria-live="polite" role="status">
-        <span className="avatar giant">{participant.slice(0, 1)}</span>
+        <span className="avatar giant">{participant}</span>
         <strong>{participant} 님 차례예요</strong>
         <p>다른 사람의 기록이 보이지 않게 이 기기를 넘긴 뒤 시작해 주세요.</p>
       </div>
       {abortReason === 'background' && (
         <p className="info-card" aria-live="polite">앱이 백그라운드로 이동해 이번 기록을 폐기했어요.</p>
       )}
-      <ScreenCTA testId="participant-turn-start" onClick={onNext}>{participant} 시작하기</ScreenCTA>
+      <ScreenCTA testId="participant-turn-start" onClick={onNext}>시작하기</ScreenCTA>
     </section>
   )
 }
@@ -1777,11 +1777,17 @@ function RankingGameScreen({ game, participant, playerIndex = 0, previousScores 
 
 function RankingGamePreview({ game }) {
   const memoryTiles = ['🍀', '⭐', '🎈', '🚀', '🍉', '🎵', '🍀', '⭐', '🎈', '🚀', '🍉', '🎵']
+  const numberTiles = [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
   return (
     <div className={`game-play-stage ${game.id}-stage countdown-preview`} aria-hidden="true">
       {game.id === 'reaction' && <button className="reaction-pad waiting" type="button" disabled>기다려주세요</button>}
       {game.id === 'timingStop' && <div className="timing-track"><i /><b /></div>}
+      {game.id === 'numberOrder' && (
+        <div className="number-board">
+          {numberTiles.map((tile) => <button key={tile} type="button" disabled>{tile}</button>)}
+        </div>
+      )}
       {game.id === 'memoryCard' && (
         <div className="memory-board">
           {memoryTiles.map((tile, index) => <button className="memory-card flipped" key={`${tile}-${index}`} type="button" disabled>{tile}</button>)}
@@ -1795,6 +1801,7 @@ function GameCountdownOverlay({ count, game }) {
   const descriptions = {
     reaction: '신호가 뜨면 바로 탭하세요...',
     timingStop: '목표 지점에 맞춰 멈출 준비 중...',
+    numberOrder: '1부터 9까지 순서대로 누를 준비를 해 주세요...',
     memoryCard: '카드 위치를 기억할 준비를 해 주세요...',
   }
 
@@ -2091,7 +2098,7 @@ function TimingStopGameScreen({ game, participant, onScore }) {
           <span>{result ? `중앙에서 ${result.distance.toFixed(1)}pt 차이` : '포인터가 타깃 중앙에 겹치는 순간을 노려보세요.'}</span>
         </div>
       </div>
-      {result && (
+      {/* {result && (
         <div className="timing-result-panel" data-testid="timing-result-panel" aria-live="polite">
           <span className={`timing-grade-badge ${result.grade.toLowerCase()}`}>{getTimingGradeLabel(result.grade)}</span>
           <span>
@@ -2103,7 +2110,7 @@ function TimingStopGameScreen({ game, participant, onScore }) {
             <strong>중앙에서 {result.distance.toFixed(1)}pt 차이</strong>
           </span>
         </div>
-      )}
+      )} */}
       <Button data-testid="timing-stop" color="primary" display="full" size="large" type="button" disabled={done} onClick={stop}>멈추기</Button>
     </div>
   )
@@ -2133,24 +2140,13 @@ function NumberOrderGameScreen({ game, participant, onScore }) {
       return { error: '균형 잡힌 숫자 배열을 준비하지 못했어요.', tiles: [] }
     }
   }, [participant])
-  const [startedAt, setStartedAt] = useState(0)
+  const [startedAt] = useState(() => Date.now())
   const [nextNumber, setNextNumber] = useState(1)
   const [mistakes, setMistakes] = useState(0)
   const [done, setDone] = useState(false)
 
-  function start() {
-    if (startedAt > 0 || done || layoutResult.error) {
-      return
-    }
-
-    setStartedAt(Date.now())
-    setNextNumber(1)
-    setMistakes(0)
-    setDone(false)
-  }
-
   function press(tile) {
-    if (!startedAt || done) {
+    if (done) {
       return
     }
 
@@ -2174,11 +2170,10 @@ function NumberOrderGameScreen({ game, participant, onScore }) {
 
   return (
     <div className="game-play-stage number-order-stage">
-      <Button data-testid="number-start" color="primary" disabled={startedAt > 0 || done || Boolean(layoutResult.error)} size="small" type="button" variant="weak" onClick={start}>시작</Button>
       {layoutResult.error && <p className="game-error" role="alert">{layoutResult.error}</p>}
       <div className="number-board">
         {layoutResult.tiles.map((tile) => (
-          <button data-testid={`number-tile-${tile}`} key={tile} type="button" disabled={done || (startedAt > 0 && tile < nextNumber)} onClick={() => press(tile)}>
+          <button data-testid={`number-tile-${tile}`} key={tile} type="button" disabled={done || tile < nextNumber} onClick={() => press(tile)}>
             {tile}
           </button>
         ))}

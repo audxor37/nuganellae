@@ -66,6 +66,7 @@ export const gameCatalog = [
     rule: '완료 시간이 짧을수록 높은 순위예요. 잘못 누르면 0.5초가 추가돼요.',
     recommendedPlayers: { min: 2, max: 6 },
     estimatedSecondsPerPlayer: 14,
+    requiresCountdownReady: true,
   },
   {
     id: 'memoryCard',

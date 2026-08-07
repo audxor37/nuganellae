@@ -116,7 +116,7 @@ function expectDisplayedAmount(value) {
 }
 
 async function completeFiveSecondTurn(participant, elapsedMs) {
-  fireEvent.click(screen.getByRole('button', { name: new RegExp(`${participant} 시작하기`) }))
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(`시작하기`) }))
   fireEvent.click(screen.getByTestId('five-second-start'))
   await act(async () => {
     vi.advanceTimersByTime(elapsedMs)
@@ -126,7 +126,7 @@ async function completeFiveSecondTurn(participant, elapsedMs) {
 }
 
 async function completeReactionTurn(participant, reactionMs) {
-  fireEvent.click(screen.getByRole('button', { name: new RegExp(`${participant} 시작하기`) }))
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(`시작하기`) }))
   await advanceGameCountdown()
   await act(async () => {
     vi.advanceTimersByTime(3000 + reactionMs)
@@ -1130,7 +1130,7 @@ test('tie rematch shows five rematch targets at once in compact cards', async ()
   fireEvent.click(screen.getByTestId('play-order-next'))
 
   for (const participant of ['민수', '지훈', '수진', '영희', '새친구']) {
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(`${participant} 시작하기`) }))
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`시작하기`) }))
     await advanceGameCountdown()
     fireEvent.click(screen.getByTestId('reaction-action'))
     fireEvent.click(screen.getByTestId('complete-game-turn'))
@@ -1213,6 +1213,56 @@ test('automatic ranking games show a countdown before gameplay controls appear',
   })
   expect(screen.queryByTestId('game-countdown-overlay')).not.toBeInTheDocument()
   expect(screen.getByTestId('reaction-action')).toBeInTheDocument()
+})
+
+test('number order game counts down for three seconds and starts automatically', async () => {
+  vi.useFakeTimers()
+  startRankingGameForExecution('numberOrder')
+
+  expect(screen.getByTestId('game-countdown-overlay')).toBeInTheDocument()
+  expect(screen.getByTestId('game-countdown-number')).toHaveTextContent('3')
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
+  expect(screen.queryByTestId('number-tile-1')).not.toBeInTheDocument()
+  expect(document.querySelectorAll('.countdown-preview .number-board button')).toHaveLength(9)
+
+  await act(async () => {
+    vi.advanceTimersByTime(1000)
+  })
+  expect(screen.getByTestId('game-countdown-number')).toHaveTextContent('2')
+
+  await act(async () => {
+    vi.advanceTimersByTime(1000)
+  })
+  expect(screen.getByTestId('game-countdown-number')).toHaveTextContent('1')
+
+  await act(async () => {
+    vi.advanceTimersByTime(1000)
+  })
+  expect(screen.queryByTestId('game-countdown-overlay')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('number-start')).not.toBeInTheDocument()
+  expect(screen.getAllByTestId(/^number-tile-/)).toHaveLength(9)
+  expect(screen.getByTestId('number-tile-1')).toBeEnabled()
+})
+
+test('number order game restarts the countdown for the next participant', async () => {
+  vi.useFakeTimers()
+  startRankingGameForExecution('numberOrder')
+  await advanceGameCountdown()
+
+  for (let tile = 1; tile <= 9; tile += 1) {
+    fireEvent.click(screen.getByTestId(`number-tile-${tile}`))
+  }
+  fireEvent.click(screen.getByTestId('complete-game-turn'))
+  fireEvent.click(screen.getByTestId('participant-turn-start'))
+
+  expect(screen.getByTestId('game-countdown-overlay')).toBeInTheDocument()
+  expect(screen.getByTestId('game-countdown-number')).toHaveTextContent('3')
+  expect(screen.queryByTestId('number-tile-1')).not.toBeInTheDocument()
+  expect(document.querySelectorAll('.countdown-preview .number-board button')).toHaveLength(9)
+
+  await advanceGameCountdown()
+  expect(screen.queryByTestId('game-countdown-overlay')).not.toBeInTheDocument()
+  expect(screen.getByTestId('number-tile-1')).toBeEnabled()
 })
 
 test('participant turn changes are announced to assistive technology', () => {
@@ -1778,8 +1828,9 @@ test('number order game adds mistake penalty to the final score', async () => {
   startRankingGameForExecution('numberOrder')
 
   expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
-  fireEvent.click(screen.getByTestId('number-start'))
-  expect(screen.getByTestId('number-start')).toBeDisabled()
+  expect(screen.getByTestId('game-countdown-overlay')).toBeInTheDocument()
+  await advanceGameCountdown()
+  expect(screen.queryByTestId('number-start')).not.toBeInTheDocument()
   expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
   fireEvent.click(screen.getByTestId('number-tile-3'))
   fireEvent.click(screen.getByTestId('number-tile-1'))
