@@ -542,6 +542,45 @@ small {
   grid-column: 1 / -1;
 }
 
+.history-ad-banner {
+  width: 100%;
+  min-height: 96px;
+  margin-top: 16px;
+  overflow: hidden;
+  border-radius: 16px;
+}
+
+.storage-error-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 20px 0;
+  border-radius: 16px;
+  background: #fff1f0;
+  color: #b42318;
+  padding: 12px 14px;
+  font-size: 13px;
+}
+
+.storage-error-notice > span {
+  flex: 1;
+}
+
+.recent-group-list {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--surface-low);
+}
+
+.recent-group-list > small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
 .summary-banner {
   position: relative;
   display: grid;

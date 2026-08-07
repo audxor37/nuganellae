@@ -4,12 +4,24 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, test, vi } from 'vitest'
 import { TDSMobileAITProvider } from '@toss/tds-mobile-ait'
 import App, { getTimingStopPosition, sanitizeFileName } from './App'
+import { storageKeys } from './storage/settlement-storage'
 
 const bridgeMocks = vi.hoisted(() => ({
   getTossShareLink: vi.fn(async () => 'https://toss.im/share?deep_link_value=nuganellae'),
+  loadFullScreenAd: Object.assign(vi.fn(), { isSupported: vi.fn(() => false) }),
   saveBase64Data: vi.fn(async () => undefined),
   setClipboardText: vi.fn(async () => undefined),
+  showFullScreenAd: Object.assign(vi.fn(), { isSupported: vi.fn(() => false) }),
   share: vi.fn(async () => undefined),
+  Storage: {
+    getItem: vi.fn(async () => null),
+    setItem: vi.fn(async () => undefined),
+    removeItem: vi.fn(async () => undefined),
+  },
+  TossAds: {
+    initialize: Object.assign(vi.fn(), { isSupported: vi.fn(() => false) }),
+    attachBanner: Object.assign(vi.fn(() => ({ destroy: vi.fn() })), { isSupported: vi.fn(() => false) }),
+  },
 }))
 
 vi.mock('@apps-in-toss/web-framework', () => bridgeMocks)
@@ -126,6 +138,293 @@ async function completeReactionTurn(participant, reactionMs) {
 afterEach(() => {
   vi.useRealTimers()
   vi.clearAllMocks()
+  bridgeMocks.Storage.getItem.mockResolvedValue(null)
+  bridgeMocks.Storage.setItem.mockResolvedValue(undefined)
+  bridgeMocks.Storage.removeItem.mockResolvedValue(undefined)
+})
+
+test('does not present sample settlements as real saved history', async () => {
+  renderApp()
+
+  await waitFor(() => {
+    expect(screen.queryByText('최근 정산 (7월 14일)')).not.toBeInTheDocument()
+  })
+
+  fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
+  expect(await screen.findByText('아직 정산 내역이 없어요')).toBeInTheDocument()
+})
+
+test('finishes hydration with a retryable error when device storage is unavailable', async () => {
+  bridgeMocks.Storage.getItem.mockRejectedValue(new Error('bridge unavailable'))
+  renderApp()
+
+  fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
+
+  expect(
+    await screen.findByText('저장된 정산 내역을 불러오지 못했어요'),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText('정산 내역을 불러오는 중이에요'),
+  ).not.toBeInTheDocument()
+
+  bridgeMocks.Storage.getItem.mockResolvedValue(null)
+  fireEvent.click(screen.getByRole('button', { name: '다시 불러오기' }))
+  expect(await screen.findByText('아직 정산 내역이 없어요')).toBeInTheDocument()
+})
+
+test('hydrates saved settlements from the device storage', async () => {
+  bridgeMocks.Storage.getItem.mockImplementation(async (key) => {
+    if (key === storageKeys.settlements) {
+      return JSON.stringify([{
+        id: 'saved-1',
+        title: '저장된 저녁 모임',
+        amount: 63000,
+        participants: ['민수', '지훈', '수진'],
+        mode: 'equal',
+        modeLabel: '똑같이 나누기',
+        selectedParticipant: '',
+        lineItems: [],
+        completedAt: '2026-07-31T10:00:00.000Z',
+      }])
+    }
+    return null
+  })
+
+  renderApp()
+  fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
+
+  expect(await screen.findByText('저장된 저녁 모임')).toBeInTheDocument()
+  expect(screen.getAllByText('63,000원')).toHaveLength(2)
+})
+
+test('opens and safely deletes a real saved settlement detail', async () => {
+  bridgeMocks.Storage.getItem.mockImplementation(async (key) => {
+    if (key === storageKeys.settlements) {
+      return JSON.stringify([{
+        id: 'saved-delete',
+        title: '삭제할 저녁 모임',
+        amount: 63000,
+        participants: ['민수', '지훈', '수진'],
+        mode: 'equal',
+        modeLabel: '똑같이 나누기',
+        selectedParticipant: '',
+        lineItems: [
+          { participant: '민수', amount: 21000, amountText: '21,000원', description: '동일 분담', highlighted: false },
+          { participant: '지훈', amount: 21000, amountText: '21,000원', description: '동일 분담', highlighted: false },
+          { participant: '수진', amount: 21000, amountText: '21,000원', description: '동일 분담', highlighted: false },
+        ],
+        summaryText: '모두 21,000원씩 내요.',
+        completedAt: '2026-07-31T10:00:00.000Z',
+      }])
+    }
+    return null
+  })
+
+  renderApp()
+  fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
+  fireEvent.click(await screen.findByRole('button', { name: /삭제할 저녁 모임/ }))
+
+  expect(screen.getByRole('heading', { name: '삭제할 저녁 모임' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '정산 내역 삭제' }))
+  const dialog = screen.getByRole('dialog', { name: '정산 내역을 삭제할까요?' })
+  fireEvent.click(within(dialog).getByRole('button', { name: '삭제하기' }))
+
+  expect(await screen.findByText('아직 정산 내역이 없어요')).toBeInTheDocument()
+  expect(bridgeMocks.Storage.setItem).toHaveBeenCalledWith(storageKeys.settlements, '[]')
+})
+
+test('keeps a settlement visible when deleting it fails to persist', async () => {
+  bridgeMocks.Storage.getItem.mockImplementation(async (key) => {
+    if (key === storageKeys.settlements) {
+      return JSON.stringify([{
+        id: 'saved-delete-failure',
+        title: '삭제 실패 모임',
+        amount: 42000,
+        participants: ['민수', '지훈'],
+        mode: 'equal',
+        modeLabel: '똑같이 나누기',
+        selectedParticipant: '',
+        lineItems: [],
+        summaryText: '모두 21,000원씩 내요.',
+        completedAt: '2026-07-31T10:00:00.000Z',
+      }])
+    }
+    return null
+  })
+  bridgeMocks.Storage.setItem.mockImplementation(async (key) => {
+    if (key === storageKeys.settlements) {
+      throw new Error('write failed')
+    }
+  })
+
+  renderApp()
+  fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
+  fireEvent.click(await screen.findByRole('button', { name: /삭제 실패 모임/ }))
+  fireEvent.click(screen.getByRole('button', { name: '정산 내역 삭제' }))
+  fireEvent.click(
+    within(screen.getByRole('dialog', { name: '정산 내역을 삭제할까요?' }))
+      .getByRole('button', { name: '삭제하기' }),
+  )
+
+  expect(
+    await screen.findByText('정산 내역을 삭제하지 못했어요. 다시 시도해 주세요'),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: '삭제 실패 모임' })).toBeInTheDocument()
+})
+
+test('blocks deleting an existing record while history cannot be re-read', async () => {
+  let historyReadFails = false
+  bridgeMocks.Storage.getItem.mockImplementation(async (key) => {
+    if (key === storageKeys.settlements) {
+      if (historyReadFails) {
+        throw new Error('temporary read failure')
+      }
+      return JSON.stringify([{
+        id: 'existing-delete-record',
+        title: '다시 확인할 정산',
+        amount: 42000,
+        participants: ['민수', '지훈'],
+        mode: 'equal',
+        modeLabel: '똑같이 나누기',
+        selectedParticipant: '',
+        lineItems: [],
+        summaryText: '모두 21,000원씩 내요.',
+        completedAt: '2026-07-31T10:00:00.000Z',
+      }])
+    }
+    return null
+  })
+  bridgeMocks.Storage.setItem.mockImplementation(async (key) => {
+    if (key === storageKeys.analyticsOptOut) {
+      throw new Error('write failed')
+    }
+  })
+
+  renderApp()
+  fireEvent.click(screen.getByRole('button', { name: '설정' }))
+  fireEvent.click(
+    screen.getByRole('switch', { name: '익명 사용 통계 수집 안 함' }),
+  )
+  expect(
+    await screen.findByText('기기 저장소에 변경 내용을 저장하지 못했어요'),
+  ).toBeInTheDocument()
+
+  historyReadFails = true
+  fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
+  fireEvent.click(screen.getByRole('button', { name: '다시 불러오기' }))
+  expect(
+    await screen.findByText('저장된 정산 내역을 불러오지 못했어요'),
+  ).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: /다시 확인할 정산/ }))
+  fireEvent.click(screen.getByRole('button', { name: '정산 내역 삭제' }))
+  fireEvent.click(
+    within(screen.getByRole('dialog', { name: '정산 내역을 삭제할까요?' }))
+      .getByRole('button', { name: '삭제하기' }),
+  )
+
+  expect(
+    await screen.findByText('정산 내역을 다시 불러온 후 삭제해 주세요'),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('heading', { name: '다시 확인할 정산' }),
+  ).toBeInTheDocument()
+})
+
+test('offers to continue an unfinished settlement draft', async () => {
+  bridgeMocks.Storage.getItem.mockImplementation(async (key) => {
+    if (key === storageKeys.draft) {
+      return JSON.stringify({
+        version: 1,
+        step: 'amount',
+        settlementTitle: '이어갈 모임',
+        amount: 50000,
+        participants: ['민수', '지훈'],
+        settlementMode: 'equal',
+        selectedGameId: 'roulette',
+      })
+    }
+    return null
+  })
+
+  renderApp()
+
+  fireEvent.click(await screen.findByRole('button', { name: '이어서 정산하기' }))
+  expect(screen.getByRole('heading', { name: '얼마를 나눌까요?' })).toBeInTheDocument()
+  expectDisplayedAmount('50,000')
+})
+
+test('persists a completed equal settlement as a real history record', async () => {
+  renderApp()
+
+  startSettlement()
+  enterAmountWithQuickButton()
+  fireEvent.click(screen.getByRole('button', { name: /정산 방식 고르기/ }))
+  fireEvent.click(screen.getByRole('button', { name: /똑같이 나누기/ }))
+  fireEvent.click(screen.getByRole('button', { name: /결과 확인하기/ }))
+
+  await waitFor(() => {
+    expect(bridgeMocks.Storage.setItem).toHaveBeenCalledWith(
+      storageKeys.settlements,
+      expect.stringContaining('강남역 삼겹살 모임'),
+    )
+  })
+})
+
+test('does not overwrite existing history after a temporary history read failure', async () => {
+  let historyReadFails = true
+  bridgeMocks.Storage.getItem.mockImplementation(async (key) => {
+    if (key === storageKeys.settlements) {
+      if (historyReadFails) {
+        throw new Error('temporary read failure')
+      }
+      return JSON.stringify([{
+        id: 'existing-record',
+        title: '기존 정산',
+        amount: 30000,
+        participants: ['민수', '지훈'],
+        mode: 'equal',
+        modeLabel: '똑같이 나누기',
+        selectedParticipant: '',
+        lineItems: [],
+        completedAt: '2026-07-30T10:00:00.000Z',
+      }])
+    }
+    return null
+  })
+  renderApp()
+
+  expect(
+    await screen.findByText('저장된 정산 내역을 불러오지 못했어요'),
+  ).toBeInTheDocument()
+  bridgeMocks.Storage.setItem.mockClear()
+
+  startSettlement()
+  enterAmountWithQuickButton()
+  fireEvent.click(screen.getByRole('button', { name: /정산 방식 고르기/ }))
+  fireEvent.click(screen.getByRole('button', { name: /똑같이 나누기/ }))
+  fireEvent.click(screen.getByRole('button', { name: /결과 확인하기/ }))
+
+  await waitFor(() => {
+    expect(screen.getByRole('heading', { name: /정산이 완료됐어요/ })).toBeInTheDocument()
+  })
+  expect(
+    bridgeMocks.Storage.setItem.mock.calls.some(
+      ([key]) => key === storageKeys.settlements,
+    ),
+  ).toBe(false)
+
+  historyReadFails = false
+  fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
+  fireEvent.click(screen.getByRole('button', { name: '다시 불러오기' }))
+  await waitFor(() => {
+    const mergedWrite = bridgeMocks.Storage.setItem.mock.calls.find(
+      ([key, value]) =>
+        key === storageKeys.settlements &&
+        value.includes('existing-record') &&
+        value.includes('강남역 삼겹살 모임'),
+    )
+    expect(mergedWrite).toBeDefined()
+  })
 })
 
 test('uses TDS Mobile primitives for the main UI surfaces', () => {
@@ -154,10 +453,26 @@ test('summary banners reserve a separate icon column to avoid clipping content',
   expect(styles).toMatch(/\.summary-banner \.material-symbols-outlined\s*\{[^}]*position:\s*static/s)
 })
 
-test('start screen uses unclipped custom recent settlement and settlement visual', () => {
+test('start screen uses a real saved recent settlement and settlement visual', async () => {
+  bridgeMocks.Storage.getItem.mockImplementation(async (key) => {
+    if (key === storageKeys.settlements) {
+      return JSON.stringify([{
+        id: 'recent-real',
+        title: '저장된 최근 모임',
+        amount: 84000,
+        participants: ['민수', '지훈', '수진', '영희'],
+        mode: 'equal',
+        modeLabel: '똑같이 나누기',
+        selectedParticipant: '',
+        lineItems: [],
+        completedAt: '2026-07-14T10:00:00.000Z',
+      }])
+    }
+    return null
+  })
   const { container } = renderApp()
 
-  const recentCard = screen.getByRole('button', { name: /최근 정산 \(7월 14일\).*84,000원.*강남역 삼겹살 모임/ })
+  const recentCard = await screen.findByRole('button', { name: /최근 정산.*저장된 최근 모임.*84,000원.*4명/ })
   expect(recentCard).toHaveClass('recent-settlement-card')
   expect(container.querySelector('.settlement-visual')).toBeInTheDocument()
   expect(container.querySelector('.receipt-card')).not.toBeInTheDocument()
@@ -227,19 +542,17 @@ test('renders the Stitch start screen copy and primary action', () => {
   renderApp()
 
   expect(screen.getByRole('heading', { name: /오늘 정산, 재미있게 결정해요/ })).toBeInTheDocument()
-  expect(screen.getByText('강남역 삼겹살 모임')).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: '금액과 참여자를 입력하면 각자 낼 금액을 계산해 드려요' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /정산 시작하기/ })).toBeInTheDocument()
 })
 
-test('requires a settlement title before entering the amount', () => {
+test('lets users skip the optional settlement title', () => {
   renderApp()
 
   startSettlement()
 
   expect(screen.getByRole('heading', { name: '어떤 정산인가요?' })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /금액 입력하기/ })).toBeDisabled()
-
-  fireEvent.change(screen.getByLabelText('정산 타이틀'), { target: { value: '강남역 삼겹살 모임' } })
+  expect(screen.getByText('정산 이름은 나중에 기록을 찾기 위한 선택 항목이에요.')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: /금액 입력하기/ }))
 
   expect(screen.getByRole('heading', { name: '얼마를 나눌까요?' })).toBeInTheDocument()
@@ -415,16 +728,26 @@ test('share sheet actions call Toss bridge APIs with settlement payloads', async
   const dialog = await openFinalShareSheet()
 
   expect(within(dialog).getByRole('button', { name: /토스로 공유/ })).toBeInTheDocument()
+  expect(within(dialog).getByRole('button', { name: /정산 요약 복사/ })).toBeInTheDocument()
   expect(within(dialog).getByRole('button', { name: /링크 복사/ })).toBeInTheDocument()
   expect(within(dialog).getByRole('button', { name: /이미지 저장/ })).toBeInTheDocument()
   expect(within(dialog).getByRole('button', { name: /카카오톡으로 바로 보내기/ })).toBeInTheDocument()
 
   fireEvent.click(within(dialog).getByRole('button', { name: /토스로 공유/ }))
   await waitFor(() => {
-    expect(bridgeMocks.getTossShareLink).toHaveBeenCalledWith(expect.stringMatching(/^intoss:\/\/nuganellae\/settlement-result\?/))
+    expect(bridgeMocks.getTossShareLink).toHaveBeenCalledWith(expect.stringMatching(/^intoss:\/\/nuganellae\/start\?/))
     expect(bridgeMocks.share).toHaveBeenCalledWith({
       message: expect.stringContaining('강남역 삼겹살 모임'),
     })
+  })
+  const deepLink = bridgeMocks.getTossShareLink.mock.calls.at(-1)[0]
+  expect(deepLink).not.toContain(encodeURIComponent('강남역 삼겹살 모임'))
+  expect(deepLink).not.toContain(encodeURIComponent('민수'))
+  expect(deepLink).not.toContain('60000')
+
+  fireEvent.click(within(dialog).getByRole('button', { name: /정산 요약 복사/ }))
+  await waitFor(() => {
+    expect(bridgeMocks.setClipboardText).toHaveBeenCalledWith(expect.stringContaining('총 정산 금액: 60,000원'))
   })
 
   fireEvent.click(within(dialog).getByRole('button', { name: /링크 복사/ }))
@@ -455,18 +778,40 @@ test('sanitizes settlement titles for image file names', () => {
   expect(sanitizeFileName('   ')).toBe('nuganellae-settlement-result.png')
 })
 
-test('bottom navigation opens history and settings screens', () => {
+test('bottom navigation opens truthful history and settings screens', () => {
   renderApp()
 
   fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
   expect(screen.getByRole('heading', { name: '정산 내역' })).toBeInTheDocument()
-  expect(screen.getByText('이번 달 보낸 정산금')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('radio', { name: '받을 정산' }))
-  expect(screen.getByRole('radio', { name: '받을 정산' })).toBeChecked()
+  expect(screen.getByText('누적 정산 금액')).toBeInTheDocument()
+  expect(screen.queryByRole('radio', { name: '받을 정산' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '이전 화면' })).not.toBeInTheDocument()
 
   fireEvent.click(screen.getByRole('button', { name: '설정' }))
   expect(screen.getByRole('heading', { name: '설정' })).toBeInTheDocument()
   expect(screen.getByText('서비스 이용 안내')).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '서비스 이용 안내' }),
+  ).not.toBeInTheDocument()
+})
+
+test('settings expose analytics opt-out and confirmed local data deletion', async () => {
+  renderApp()
+  fireEvent.click(screen.getByRole('button', { name: '설정' }))
+
+  fireEvent.click(screen.getByRole('switch', { name: '익명 사용 통계 수집 안 함' }))
+  await waitFor(() => {
+    expect(bridgeMocks.Storage.setItem).toHaveBeenCalledWith(storageKeys.analyticsOptOut, 'true')
+  })
+
+  fireEvent.click(screen.getByRole('button', { name: /앱 데이터 전체 삭제/ }))
+  const dialog = screen.getByRole('dialog', { name: '앱 데이터를 모두 삭제할까요?' })
+  fireEvent.click(within(dialog).getByRole('button', { name: '모두 삭제' }))
+
+  await waitFor(() => {
+    expect(bridgeMocks.Storage.removeItem).toHaveBeenCalledWith(storageKeys.settlements)
+    expect(bridgeMocks.Storage.removeItem).toHaveBeenCalledWith(storageKeys.draft)
+  })
 })
 
 test('keeps all settlement modes and lets roulette start from each mode', () => {
