@@ -8,7 +8,7 @@ import { getNextAdFrequencyState, shouldShowInterstitial } from './ads/ad-policy
 import { attachHistoryBanner, createInterstitialAd } from './ads/apps-in-toss-ads'
 import { initializeAnalyticsClient } from './analytics/client'
 import { getAmountBucket } from './analytics/events'
-import { getGameById, getGamesForParticipants } from './games/catalog'
+import { gameCatalog, getGameById, getGamesForParticipants } from './games/catalog'
 import { pickOne, shuffle } from './games/core/random'
 import { createGameScore, formatGameScore, getSettlementTargetScores as selectSettlementTargetScores, rankScores } from './games/core/scoring'
 import { createInitialGameSession, gameSessionReducer } from './games/core/session'
@@ -62,6 +62,13 @@ const steps = {
 }
 
 const baseParticipants = ['민수', '지훈', '수진', '영희']
+const defaultAppSettings = {
+  version: 1,
+  defaultSettlementMode: 'exempt',
+  defaultGameId: 'roulette',
+  defaultAllowReselect: false,
+  updatedAt: null,
+}
 
 const earlyReactionRankMetric = Number.MAX_SAFE_INTEGER
 const maxParticipants = 8
@@ -314,7 +321,8 @@ function App() {
   const [discardResultDialogOpen, setDiscardResultDialogOpen] = useState(false)
   const [restartTargetStep, setRestartTargetStep] = useState(null)
   const [savedSettlements, setSavedSettlements] = useState([])
-  const [, setSavedDraft] = useState(null)
+  const [savedDraft, setSavedDraft] = useState(null)
+  const [appSettings, setAppSettings] = useState(defaultAppSettings)
   const [storageHydrated, setStorageHydrated] = useState(false)
   const [storageError, setStorageError] = useState('')
   const [hydrationRequest, setHydrationRequest] = useState(0)
@@ -421,6 +429,7 @@ function App() {
           settlementRepository.loadAdFrequency(),
           settlementRepository.loadAnalyticsOptOut(),
           settlementRepository.getAnonymousId(),
+          settlementRepository.loadAppSettings(),
         ])
         if (!active) {
           return
@@ -437,6 +446,7 @@ function App() {
         })
         const storedAnalyticsOptOut = valueAt(3, true)
         const storedAnonymousId = valueAt(4, null)
+        const storedAppSettings = valueAt(5, defaultAppSettings)
         const settlementsReadSucceeded = results[1].status === 'fulfilled'
         const anonymousId =
           storedAnonymousId ||
@@ -449,6 +459,7 @@ function App() {
         adFrequencyRef.current = storedAdFrequency
         setAnalyticsOptOut(Boolean(storedAnalyticsOptOut))
         analyticsOptOutRef.current = Boolean(storedAnalyticsOptOut)
+        setAppSettings(storedAppSettings)
         settlementsReadableRef.current = settlementsReadSucceeded
         if (settlementsReadSucceeded) {
           const pendingRecords = pendingSettlementsRef.current
@@ -810,17 +821,17 @@ function App() {
     dispatchGameSession({ type: 'EXIT_SESSION' })
   }
 
-  function resetSettlementDraft() {
+  function resetSettlementDraft(settings = appSettings) {
     recordedCompletionRef.current = null
     setSettlementTitle('')
     setAmount(0)
     setNewParticipant('')
     setParticipantMessage('')
     setParticipants([...baseParticipants])
-    setSettlementMode('exempt')
+    setSettlementMode(settings.defaultSettlementMode)
     setWinner(baseParticipants[baseParticipants.length - 1])
-    setAllowReselect(false)
-    setSelectedGameId('roulette')
+    setAllowReselect(settings.defaultAllowReselect)
+    setSelectedGameId(settings.defaultGameId)
     setRouletteSpinning(false)
     setRouletteDuration(2000)
     setRouletteRotation(0)
@@ -845,14 +856,14 @@ function App() {
       }
     }
 
-    resetSettlementDraft()
+    resetSettlementDraft(appSettings)
     setSavedDraft(null)
     void settlementRepository.removeDraft().catch(() => reportStorageError())
     navigateHomeStep(steps.title, { resetHistory: true })
   }
 
   function startNewSettlement() {
-    resetSettlementDraft()
+    resetSettlementDraft(appSettings)
     setSavedDraft(null)
     void settlementRepository.removeDraft().catch(() => reportStorageError())
     analyticsRef.current.track('settlement_started', { source: 'home', stage: 'setup' })
@@ -872,12 +883,61 @@ function App() {
       .catch(() => reportStorageError())
   }
 
+  function updateAppSettings(nextSettings) {
+    const settings = {
+      ...defaultAppSettings,
+      ...appSettings,
+      ...nextSettings,
+      version: 1,
+      updatedAt: new Date().toISOString(),
+    }
+
+    setAppSettings(settings)
+    void settlementRepository
+      .saveAppSettings(settings)
+      .catch(() => reportStorageError())
+  }
+
+  async function clearDraftData() {
+    try {
+      await settlementRepository.removeDraft()
+      setSavedDraft(null)
+      setStorageError('')
+    } catch {
+      reportStorageError('작성 중인 정산을 삭제하지 못했어요. 다시 시도해 주세요')
+    }
+  }
+
+  async function clearSettlementHistory() {
+    try {
+      await settlementRepository.removeSettlements()
+      setSavedSettlements([])
+      pendingSettlementsRef.current = []
+      settlementsReadableRef.current = true
+      setSelectedSettlement(null)
+      setStorageError('')
+    } catch {
+      reportStorageError('정산 내역을 삭제하지 못했어요. 다시 시도해 주세요')
+    }
+  }
+
+  async function resetStoredSettings() {
+    try {
+      await settlementRepository.removeAppSettings()
+      setAppSettings(defaultAppSettings)
+      setStorageError('')
+    } catch {
+      reportStorageError('기본 설정을 초기화하지 못했어요. 다시 시도해 주세요')
+    }
+  }
+
   async function clearAllAppData() {
     try {
       await settlementRepository.clearAppData()
-      resetSettlementDraft()
+      resetSettlementDraft(defaultAppSettings)
       setSavedDraft(null)
       setSavedSettlements([])
+      setAppSettings(defaultAppSettings)
       settlementsReadableRef.current = true
       pendingSettlementsRef.current = []
       setSelectedSettlement(null)
@@ -1084,11 +1144,7 @@ function App() {
         )}
 
         {activeTab === tabs.settings && (
-          <SettingsScreen
-            analyticsOptOut={analyticsOptOut}
-            onAnalyticsOptOutChange={updateAnalyticsOptOut}
-            onClearAll={clearAllAppData}
-          />
+          <SettingsScreen />
         )}
 
         {activeTab === tabs.home && step === steps.start && (
@@ -2143,11 +2199,33 @@ function NumberOrderGameScreen({ game, participant, onScore }) {
   const [nextNumber, setNextNumber] = useState(1)
   const [mistakes, setMistakes] = useState(0)
   const [done, setDone] = useState(false)
+  const [pressedTile, setPressedTile] = useState(null)
+  const pressedTimerRef = useRef(null)
+
+  useEffect(() => () => {
+    if (pressedTimerRef.current) {
+      window.clearTimeout(pressedTimerRef.current)
+    }
+  }, [])
+
+  function showTileFeedback(tile) {
+    navigator.vibrate?.(18)
+    setPressedTile(tile)
+    if (pressedTimerRef.current) {
+      window.clearTimeout(pressedTimerRef.current)
+    }
+    pressedTimerRef.current = window.setTimeout(() => {
+      setPressedTile(null)
+      pressedTimerRef.current = null
+    }, 140)
+  }
 
   function press(tile) {
     if (done) {
       return
     }
+
+    showTileFeedback(tile)
 
     if (tile !== nextNumber) {
       setMistakes((current) => current + 1)
@@ -2172,7 +2250,7 @@ function NumberOrderGameScreen({ game, participant, onScore }) {
       {layoutResult.error && <p className="game-error" role="alert">{layoutResult.error}</p>}
       <div className="number-board">
         {layoutResult.tiles.map((tile) => (
-          <button data-testid={`number-tile-${tile}`} key={tile} type="button" disabled={done || tile < nextNumber} onClick={() => press(tile)}>
+          <button className={pressedTile === tile ? 'pressed' : ''} data-testid={`number-tile-${tile}`} key={tile} type="button" disabled={done || tile < nextNumber} onClick={() => press(tile)}>
             {tile}
           </button>
         ))}
@@ -2669,72 +2747,47 @@ function DetailScreen({ record, onBack, onDelete, onShare }) {
   )
 }
 
-function SettingsScreen({ analyticsOptOut, onAnalyticsOptOutChange, onClearAll }) {
-  const [clearDialogOpen, setClearDialogOpen] = useState(false)
+function SettingsScreen() {
+  const [infoSheet, setInfoSheet] = useState(null)
+  const infoContent = {
+    guide: {
+      title: '게임소개',
+      description: '정산 금액과 참여자를 입력하면 선택한 방식에 맞춰 각자 낼 금액을 계산해요. 게임은 정산 대상자를 재미있게 정하기 위한 도구이며, 실제 결제나 송금은 사용자가 직접 진행합니다.',
+    },
+    terms: {
+      title: '이용약관',
+      description: '누가낼래는 공정한 비용 분담을 돕는 유틸리티입니다. 게임 결과는 정산 편의를 위한 참고용이며, 도박 또는 사행성 행위를 목적으로 제공되지 않습니다.',
+    },
+    privacy: {
+      title: '개인정보처리방침',
+      description: '정산 초안, 내역, 기본 설정은 이 기기 저장소에 보관됩니다. 익명 사용 통계를 허용해도 이름, 정산 제목, 정확한 금액은 수집하지 않습니다.',
+    },
+  }
+  const activeInfo = infoSheet ? infoContent[infoSheet] : null
 
   return (
     <>
       <TopBar title="설정" progress="로컬 저장" />
       <section className="screen settings-screen" aria-labelledby="settings-title">
         <h1 className="sr-only" id="settings-title">설정</h1>
-        <div className="info-card">
-          <Icon>smartphone</Icon>
-          <span>로그인 없이 이 기기에만 저장해요</span>
-          <small>정산 초안과 내역은 AppsInToss 기기 저장소에 보관되며, 다른 사용자에게 자동으로 전송되지 않아요.</small>
-        </div>
-        <ListHeader className="compact-list-header" title={<ListHeader.TitleParagraph>일반</ListHeader.TitleParagraph>} />
         <ul className="tds-list">
-          <SettingsRow icon="help" title="서비스 이용 안내" />
-          <ListRow
-            className="surface-row"
-            left={<span className="icon-bubble"><Icon>analytics</Icon></span>}
-            contents={<TextStack description="이름·정확한 금액·정산 제목은 수집하지 않아요" title="익명 사용 통계 수집 안 함" />}
-            right={(
-              <Switch
-                aria-label="익명 사용 통계 수집 안 함"
-                checked={analyticsOptOut}
-                onChange={(_, checked) => onAnalyticsOptOutChange(checked)}
-              />
-            )}
-          />
-          <SettingsRow
-            danger
-            description="초안과 정산 내역을 이 기기에서 삭제합니다"
-            icon="warning"
-            title="앱 데이터 전체 삭제"
-            onClick={() => setClearDialogOpen(true)}
-          />
+          <SettingsRow icon="sports_esports" title="게임소개" onClick={() => setInfoSheet('guide')} />
+          <SettingsRow icon="article" title="이용약관" onClick={() => setInfoSheet('terms')} />
+          <SettingsRow icon="privacy_tip" title="개인정보처리방침" onClick={() => setInfoSheet('privacy')} />
         </ul>
-        <ListHeader className="compact-list-header" title={<ListHeader.TitleParagraph>약관 및 지원</ListHeader.TitleParagraph>} />
-        <ul className="tds-list">
-          <SettingsRow icon="privacy_tip" title="개인정보 처리방침" />
-          <SettingsRow icon="article" title="서비스 이용약관" />
-          <SettingsRow icon="mail" title="문의하기" />
-        </ul>
-        <div className="info-card">
-          <Icon>info</Icon>
-          <span>누가낼래 앱 버전 v1.0.0</span>
-          <small>'누가낼래'는 공정한 비용 분담을 돕는 유틸리티 서비스입니다. 본 서비스는 도박 또는 사행성 행위를 조장하지 않으며, 건전한 소비 문화를 지향합니다.</small>
-        </div>
       </section>
-      <ConfirmDialog
-        closeOnBackEvent
-        closeOnDimmerClick
-        description="작성 중인 초안과 모든 정산 내역이 삭제되며 복구할 수 없어요."
-        open={clearDialogOpen}
-        title="앱 데이터를 모두 삭제할까요?"
-        onClose={() => setClearDialogOpen(false)}
-        cancelButton={(
-          <ConfirmDialog.CancelButton onClick={() => setClearDialogOpen(false)}>
-            취소
-          </ConfirmDialog.CancelButton>
-        )}
-        confirmButton={(
-          <ConfirmDialog.ConfirmButton color="danger" onClick={onClearAll}>
-            모두 삭제
-          </ConfirmDialog.ConfirmButton>
-        )}
-      />
+      <BottomSheet
+        header={activeInfo ? <BottomSheet.Header>{activeInfo.title}</BottomSheet.Header> : null}
+        open={Boolean(activeInfo)}
+        onClose={() => setInfoSheet(null)}
+      >
+        <div className="settings-info-sheet">
+          <p>{activeInfo?.description}</p>
+          <Button color="primary" display="full" size="large" type="button" onClick={() => setInfoSheet(null)}>
+            확인
+          </Button>
+        </div>
+      </BottomSheet>
     </>
   )
 }

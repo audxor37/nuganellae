@@ -962,30 +962,41 @@ test('bottom navigation opens truthful history and settings screens', () => {
 
   fireEvent.click(screen.getByRole('button', { name: '설정' }))
   expect(screen.getByRole('heading', { name: '설정' })).toBeInTheDocument()
-  expect(screen.getByText('서비스 이용 안내')).toBeInTheDocument()
-  expect(
-    screen.queryByRole('button', { name: '서비스 이용 안내' }),
-  ).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /게임소개/ })).toBeInTheDocument()
 })
 
-test('settings expose analytics opt-out and confirmed local data deletion', async () => {
+test('settings only exposes game intro terms and privacy policy', () => {
   renderApp()
   fireEvent.click(screen.getByRole('button', { name: '설정' }))
 
-  fireEvent.click(screen.getByRole('switch', { name: '익명 사용 통계 수집 안 함' }))
-  await waitFor(() => {
-    expect(bridgeMocks.Storage.setItem).toHaveBeenCalledWith(storageKeys.analyticsOptOut, 'true')
-  })
+  expect(screen.getByRole('button', { name: /게임소개/ })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /이용약관/ })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /개인정보처리방침/ })).toBeInTheDocument()
 
-  fireEvent.click(screen.getByRole('button', { name: /앱 데이터 전체 삭제/ }))
-  const dialog = screen.getByRole('dialog', { name: '앱 데이터를 모두 삭제할까요?' })
-  fireEvent.click(within(dialog).getByRole('button', { name: '모두 삭제' }))
+  for (const hiddenLabel of [
+    '기본값',
+    '기본 정산 방식',
+    '현재 기본 방식',
+    '기본 게임',
+    '현재 기본 게임',
+    '결과 재선택 기본 허용',
+    '일반',
+    '서비스 이용 안내',
+    '익명 사용 통계 수집 안 함',
+    '데이터 관리',
+    '작성 중인 정산 삭제',
+    '정산 내역 삭제',
+    '기본 설정 초기화',
+    '앱 데이터 전체 삭제',
+    '약관 및 지원',
+    '문의하기',
+  ]) {
+    expect(screen.queryByText(hiddenLabel)).not.toBeInTheDocument()
+  }
 
-  await waitFor(() => {
-    expect(bridgeMocks.Storage.removeItem).toHaveBeenCalledWith(storageKeys.settlements)
-    expect(bridgeMocks.Storage.removeItem).toHaveBeenCalledWith(storageKeys.draft)
-    expect(bridgeMocks.Storage.removeItem).toHaveBeenCalledWith(storageKeys.lastSetup)
-  })
+  expect(screen.queryByRole('switch', {
+    name: '익명 사용 통계 수집 안 함',
+  })).not.toBeInTheDocument()
 })
 
 test('keeps all settlement modes and lets roulette start from each mode', () => {
@@ -2033,6 +2044,29 @@ test('number order game adds mistake penalty to the final score', async () => {
   expect(screen.getByText(/실수: 1회/)).toBeInTheDocument()
   expect(screen.getByText(/벌점 반영 완료/)).toBeInTheDocument()
   expect(screen.getByTestId('complete-game-turn')).not.toBeDisabled()
+})
+
+test('number order game gives tap feedback and haptic vibration for number tiles', async () => {
+  vi.useFakeTimers()
+  const vibrate = vi.fn()
+  Object.defineProperty(navigator, 'vibrate', {
+    configurable: true,
+    value: vibrate,
+  })
+  startRankingGameForExecution('numberOrder')
+  await advanceGameCountdown()
+
+  const firstTile = screen.getByTestId('number-tile-1')
+  fireEvent.click(firstTile)
+
+  expect(vibrate).toHaveBeenCalledWith(18)
+  expect(firstTile).toHaveClass('pressed')
+
+  await act(async () => {
+    vi.advanceTimersByTime(180)
+  })
+
+  expect(firstTile).not.toHaveClass('pressed')
 })
 
 test('memory card game completes real pairs and records attempts', async () => {

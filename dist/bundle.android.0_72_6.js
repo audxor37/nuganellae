@@ -9,8 +9,8 @@ var global = typeof globalThis !== 'undefined' ? globalThis : typeof global !== 
     host: ''
   };
   global.__appsInToss = {
-    deploymentId: "01a05a3f-9f1c-771a-acd8-446c53b6e84f",
-    brandDisplayName: "nuganellae",
+    deploymentId: "01a05b89-90f6-7810-a8b1-4b631268fcf3",
+    brandDisplayName: "\uB204\uAC00\uB0BC\uB798",
     brandPrimaryColor: "#3182F6",
     brandIcon: "https://static.toss.im/appsintoss/59837/7dbf9e96-2d88-4747-a6b5-928a1a698f57.png",
     webViewType: "partner",
@@ -132,8 +132,8 @@ if (global.__MICRO_FRONTEND__ == null) {
     host: ''
   };
   global.__appsInToss = {
-    deploymentId: "01a05a3f-9f1c-771a-acd8-446c53b6e84f",
-    brandDisplayName: "nuganellae",
+    deploymentId: "01a05b89-90f6-7810-a8b1-4b631268fcf3",
+    brandDisplayName: "\uB204\uAC00\uB0BC\uB798",
     brandPrimaryColor: "#3182F6",
     brandIcon: "https://static.toss.im/appsintoss/59837/7dbf9e96-2d88-4747-a6b5-928a1a698f57.png",
     webViewType: "partner",

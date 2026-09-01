@@ -37,6 +37,7 @@ describe('settlement storage repository', () => {
     const storage = createMemoryStorage({
       [storageKeys.draft]: '{}',
       [storageKeys.lastSetup]: '{}',
+      [storageKeys.appSettings]: '{}',
       [storageKeys.settlements]: '[]',
       'another-feature': 'keep',
     })
@@ -47,6 +48,7 @@ describe('settlement storage repository', () => {
     expect(storage.values.get('another-feature')).toBe('keep')
     expect(storage.values.has(storageKeys.draft)).toBe(false)
     expect(storage.values.has(storageKeys.lastSetup)).toBe(false)
+    expect(storage.values.has(storageKeys.appSettings)).toBe(false)
     expect(storage.values.has(storageKeys.settlements)).toBe(false)
   })
 
@@ -162,6 +164,59 @@ describe('settlement storage repository', () => {
     })
 
     await expect(createSettlementRepository(storage).loadLastSetup()).resolves.toBeNull()
+  })
+
+  test('loads and saves app settings with safe defaults', async () => {
+    const storage = createMemoryStorage({
+      [storageKeys.appSettings]: JSON.stringify({
+        version: 1,
+        defaultSettlementMode: 'discount',
+        defaultGameId: 'reaction',
+        defaultAllowReselect: true,
+        updatedAt: '2026-09-01T10:00:00.000Z',
+      }),
+    })
+    const repository = createSettlementRepository(storage)
+
+    await expect(repository.loadAppSettings()).resolves.toEqual({
+      version: 1,
+      defaultSettlementMode: 'discount',
+      defaultGameId: 'reaction',
+      defaultAllowReselect: true,
+      updatedAt: '2026-09-01T10:00:00.000Z',
+    })
+    await repository.saveAppSettings({
+      version: 1,
+      defaultSettlementMode: 'extra',
+      defaultGameId: 'memoryCard',
+      defaultAllowReselect: false,
+      updatedAt: '2026-09-01T11:00:00.000Z',
+    })
+
+    expect(storage.values.get(storageKeys.appSettings)).toBe(JSON.stringify({
+      version: 1,
+      defaultSettlementMode: 'extra',
+      defaultGameId: 'memoryCard',
+      defaultAllowReselect: false,
+      updatedAt: '2026-09-01T11:00:00.000Z',
+    }))
+  })
+
+  test('removes draft settlement history and app settings independently', async () => {
+    const storage = createMemoryStorage({
+      [storageKeys.draft]: '{}',
+      [storageKeys.settlements]: '[]',
+      [storageKeys.appSettings]: '{}',
+    })
+    const repository = createSettlementRepository(storage)
+
+    await repository.removeDraft()
+    await repository.removeSettlements()
+    await repository.removeAppSettings()
+
+    expect(storage.values.has(storageKeys.draft)).toBe(false)
+    expect(storage.values.has(storageKeys.settlements)).toBe(false)
+    expect(storage.values.has(storageKeys.appSettings)).toBe(false)
   })
 })
 

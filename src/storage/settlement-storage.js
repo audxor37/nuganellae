@@ -1,6 +1,7 @@
 export const storageKeys = {
   draft: 'draft:v1',
   lastSetup: 'last-setup:v1',
+  appSettings: 'app-settings:v1',
   settlements: 'settlements:v1',
   adFrequency: 'ad-frequency:v1',
   anonymousId: 'anonymous-id:v1',
@@ -51,6 +52,43 @@ function normalizeLastSetup(value) {
     settlementMode: value.settlementMode,
     selectedGameId: value.selectedGameId,
     allowReselect: Boolean(value.allowReselect),
+    updatedAt: isNonEmptyString(value.updatedAt) ? value.updatedAt : null,
+  }
+}
+
+const defaultAppSettings = {
+  version: 1,
+  defaultSettlementMode: 'exempt',
+  defaultGameId: 'roulette',
+  defaultAllowReselect: false,
+  updatedAt: null,
+}
+
+const supportedSettlementModes = new Set(['equal', 'exempt', 'extra', 'discount'])
+const supportedGameIds = new Set([
+  'roulette',
+  'receiptEnvelope',
+  'reaction',
+  'fiveSeconds',
+  'timingStop',
+  'numberOrder',
+  'memoryCard',
+])
+
+function normalizeAppSettings(value) {
+  if (!isPlainObject(value) || value.version !== 1) {
+    return defaultAppSettings
+  }
+
+  return {
+    ...defaultAppSettings,
+    defaultSettlementMode: supportedSettlementModes.has(value.defaultSettlementMode)
+      ? value.defaultSettlementMode
+      : defaultAppSettings.defaultSettlementMode,
+    defaultGameId: supportedGameIds.has(value.defaultGameId)
+      ? value.defaultGameId
+      : defaultAppSettings.defaultGameId,
+    defaultAllowReselect: Boolean(value.defaultAllowReselect),
     updatedAt: isNonEmptyString(value.updatedAt) ? value.updatedAt : null,
   }
 }
@@ -138,8 +176,12 @@ export function createSettlementRepository(storage) {
     loadLastSetup: () => load(storageKeys.lastSetup, null, normalizeLastSetup),
     saveLastSetup: (setup) => save(storageKeys.lastSetup, setup),
     removeLastSetup: () => enqueueWrite(() => storage.removeItem(storageKeys.lastSetup)),
+    loadAppSettings: () => load(storageKeys.appSettings, defaultAppSettings, normalizeAppSettings),
+    saveAppSettings: (settings) => save(storageKeys.appSettings, normalizeAppSettings(settings)),
+    removeAppSettings: () => enqueueWrite(() => storage.removeItem(storageKeys.appSettings)),
     loadSettlements: () => load(storageKeys.settlements, [], normalizeSettlements),
     saveSettlements: (records) => save(storageKeys.settlements, records),
+    removeSettlements: () => enqueueWrite(() => storage.removeItem(storageKeys.settlements)),
     loadAdFrequency: () =>
       load(
         storageKeys.adFrequency,
