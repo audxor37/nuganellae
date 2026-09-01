@@ -198,7 +198,107 @@ test('hydrates saved settlements from the device storage', async () => {
   fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
 
   expect(await screen.findByText('저장된 저녁 모임')).toBeInTheDocument()
-  expect(screen.getAllByText('63,000원')).toHaveLength(2)
+  expect(screen.getAllByText('63,000원')).toHaveLength(1)
+  expect(screen.queryByText('누적 정산 금액')).not.toBeInTheDocument()
+})
+
+test('clears all saved settlements from the history screen', async () => {
+  bridgeMocks.Storage.getItem.mockImplementation(async (key) => {
+    if (key === storageKeys.settlements) {
+      return JSON.stringify([
+        {
+          id: 'clear-all-1',
+          title: '첫 번째 모임',
+          amount: 63000,
+          participants: ['민수', '지훈', '수진'],
+          mode: 'equal',
+          modeLabel: '똑같이 나누기',
+          selectedParticipant: '',
+          lineItems: [],
+          completedAt: '2026-07-31T10:00:00.000Z',
+        },
+        {
+          id: 'clear-all-2',
+          title: '두 번째 모임',
+          amount: 42000,
+          participants: ['민수', '지훈'],
+          mode: 'equal',
+          modeLabel: '똑같이 나누기',
+          selectedParticipant: '',
+          lineItems: [],
+          completedAt: '2026-07-30T10:00:00.000Z',
+        },
+      ])
+    }
+    return null
+  })
+
+  renderApp()
+  fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
+
+  expect(await screen.findByText('첫 번째 모임')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '전체 삭제' }))
+  fireEvent.click(
+    within(screen.getByRole('dialog', { name: '모든 정산 내역을 삭제할까요?' }))
+      .getByRole('button', { name: '전체 삭제' }),
+  )
+
+  expect(await screen.findByText('아직 정산 내역이 없어요')).toBeInTheDocument()
+  expect(screen.queryByText('첫 번째 모임')).not.toBeInTheDocument()
+  expect(screen.queryByText('두 번째 모임')).not.toBeInTheDocument()
+  expect(bridgeMocks.Storage.removeItem).toHaveBeenCalledWith(storageKeys.settlements)
+})
+
+test('deletes a saved settlement from the history list after swiping its row', async () => {
+  bridgeMocks.Storage.getItem.mockImplementation(async (key) => {
+    if (key === storageKeys.settlements) {
+      return JSON.stringify([
+        {
+          id: 'swipe-delete-1',
+          title: '남길 모임',
+          amount: 63000,
+          participants: ['민수', '지훈', '수진'],
+          mode: 'equal',
+          modeLabel: '똑같이 나누기',
+          selectedParticipant: '',
+          lineItems: [],
+          completedAt: '2026-07-31T10:00:00.000Z',
+        },
+        {
+          id: 'swipe-delete-2',
+          title: '밀어서 삭제할 모임',
+          amount: 42000,
+          participants: ['민수', '지훈'],
+          mode: 'equal',
+          modeLabel: '똑같이 나누기',
+          selectedParticipant: '',
+          lineItems: [],
+          completedAt: '2026-07-30T10:00:00.000Z',
+        },
+      ])
+    }
+    return null
+  })
+
+  renderApp()
+  fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
+
+  const row = await screen.findByTestId('history-row-swipe-delete-2')
+  fireEvent.touchStart(row, { touches: [{ clientX: 220 }] })
+  fireEvent.touchMove(row, { touches: [{ clientX: 120 }] })
+  fireEvent.touchEnd(row)
+  fireEvent.click(screen.getByRole('button', { name: '밀어서 삭제할 모임 삭제' }))
+
+  expect(await screen.findByText('남길 모임')).toBeInTheDocument()
+  expect(screen.queryByText('밀어서 삭제할 모임')).not.toBeInTheDocument()
+  expect(bridgeMocks.Storage.setItem).toHaveBeenCalledWith(
+    storageKeys.settlements,
+    expect.stringContaining('남길 모임'),
+  )
+  expect(bridgeMocks.Storage.setItem).toHaveBeenCalledWith(
+    storageKeys.settlements,
+    expect.not.stringContaining('밀어서 삭제할 모임'),
+  )
 })
 
 test('opens and safely deletes a real saved settlement detail', async () => {
@@ -652,13 +752,15 @@ test('start screen keeps saved recent settlements out of the home surface', asyn
   })
   const { container } = renderApp()
 
-  expect(await screen.findByRole('button', { name: /바로 룰렛 시작/ })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /설정하고 시작/ })).toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: /정산 시작하기/ })).toBeInTheDocument()
   await waitFor(() => {
     expect(screen.queryByRole('button', { name: /최근 정산.*저장된 최근 모임.*84,000원.*4명/ })).not.toBeInTheDocument()
   })
-  expect(container.querySelector('.settlement-visual')).toBeInTheDocument()
+  const visual = container.querySelector('.hero-asset-visual img')
+  expect(visual).toBeInTheDocument()
+  expect(visual).toHaveAttribute('src', '/payer-picker-main-visual.png')
   expect(container.querySelector('.receipt-card')).not.toBeInTheDocument()
+  expect(container.querySelector('.settlement-visual')).not.toBeInTheDocument()
 })
 
 test('reaction play screen styles fit without forcing vertical scrolling', () => {
@@ -713,14 +815,32 @@ test('memory cards use four columns while the number board keeps three', () => {
   expect(styles).toMatch(/\.memory-board\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*1fr\)/s)
 })
 
-test('renders the Stitch start screen copy and primary action', () => {
+test('renders the playful start screen copy, brand visual, and primary action', () => {
+  const { container } = renderApp()
+
+  expect(screen.getByRole('heading', { name: /누가 낼지, 재미있게 정해요/ })).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: '금액과 참여자를 입력하면 게임으로 정하고 정산 결과를 바로 보여드려요' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /정산 시작하기/ })).toBeInTheDocument()
+  const visual = container.querySelector('.hero-asset-visual img')
+  expect(visual).toBeInTheDocument()
+  expect(visual).toHaveAttribute('src', '/payer-picker-main-visual.png')
+  expect(container.querySelector('.payer-picker-wheel')).not.toBeInTheDocument()
+  expect(container.querySelector('.payer-picker-pointer')).not.toBeInTheDocument()
+  expect(container.querySelector('.hero-asset-visual')).not.toHaveTextContent(/payments|paid|person/)
+  expect(screen.queryByText('1/3')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '이전 화면' })).not.toBeInTheDocument()
+})
+
+test('keeps start screen calm when draft cleanup cannot write to storage', async () => {
+  bridgeMocks.Storage.removeItem.mockRejectedValue(new Error('bridge unavailable'))
   renderApp()
 
-  expect(screen.getByRole('heading', { name: /오늘 정산, 재미있게 결정해요/ })).toBeInTheDocument()
-  expect(screen.getByRole('heading', { name: '금액과 참여자를 입력하면 각자 낼 금액을 계산해 드려요' })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /바로 룰렛 시작/ })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /설정하고 시작/ })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /게임 고르기/ })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: /정산 시작하기/ }))
+
+  await waitFor(() => {
+    expect(bridgeMocks.Storage.removeItem).toHaveBeenCalledWith(storageKeys.draft)
+  })
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
 test('lets users skip the optional settlement title', () => {
@@ -956,7 +1076,7 @@ test('bottom navigation opens truthful history and settings screens', () => {
 
   fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
   expect(screen.getByRole('heading', { name: '정산 내역' })).toBeInTheDocument()
-  expect(screen.getByText('누적 정산 금액')).toBeInTheDocument()
+  expect(screen.queryByText('누적 정산 금액')).not.toBeInTheDocument()
   expect(screen.queryByRole('radio', { name: '받을 정산' })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: '이전 화면' })).not.toBeInTheDocument()
 

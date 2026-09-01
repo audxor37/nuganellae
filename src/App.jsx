@@ -374,7 +374,8 @@ function App() {
   const isFinalStep = step === steps.finalResult || step === steps.gameFinalResult
   const isResultStep = step === steps.rouletteResult || step === steps.rankingResult || step === steps.tieRematch
   const isGameInProgressStep = step === steps.participantTurn || step === steps.gamePlay || step === steps.roulette
-  const showHomeTopBar = activeTab === tabs.home && step !== steps.detail && !isFinalStep && !(isResultStep && !allowReselect)
+  const isHomeStart = activeTab === tabs.home && step === steps.start
+  const showHomeTopBar = activeTab === tabs.home && step !== steps.start && step !== steps.detail && !isFinalStep && !(isResultStep && !allowReselect)
 
   const reportStorageError = useCallback((message = '기기 저장소에 변경 내용을 저장하지 못했어요') => {
     setStorageError(message)
@@ -865,7 +866,7 @@ function App() {
   function startNewSettlement() {
     resetSettlementDraft(appSettings)
     setSavedDraft(null)
-    void settlementRepository.removeDraft().catch(() => reportStorageError())
+    void settlementRepository.removeDraft().catch(() => undefined)
     analyticsRef.current.track('settlement_started', { source: 'home', stage: 'setup' })
     navigateHomeStep(steps.title, { resetHistory: true })
   }
@@ -970,18 +971,18 @@ function App() {
     setActiveTab(tabs.history)
   }
 
-  async function deleteSelectedSettlement() {
-    if (!selectedSettlement) {
+  async function deleteSettlementRecord(record, { afterDelete } = {}) {
+    if (!record) {
       return
     }
 
     const previousSettlements = savedSettlements
     const nextSettlements = previousSettlements.filter(
-      (record) => record.id !== selectedSettlement.id,
+      (settlement) => settlement.id !== record.id,
     )
     if (!settlementsReadableRef.current) {
       const isPendingSettlement = pendingSettlementsRef.current.some(
-        (record) => record.id === selectedSettlement.id,
+        (pendingRecord) => pendingRecord.id === record.id,
       )
       if (!isPendingSettlement) {
         reportStorageError('정산 내역을 다시 불러온 후 삭제해 주세요')
@@ -989,10 +990,13 @@ function App() {
       }
 
       pendingSettlementsRef.current = pendingSettlementsRef.current.filter(
-        (record) => record.id !== selectedSettlement.id,
+        (pendingRecord) => pendingRecord.id !== record.id,
       )
       setSavedSettlements(nextSettlements)
-      closeSettlementDetail()
+      if (selectedSettlement?.id === record.id) {
+        setSelectedSettlement(null)
+      }
+      afterDelete?.()
       return
     }
 
@@ -1001,11 +1005,20 @@ function App() {
       await settlementRepository.saveSettlements(nextSettlements)
       pendingSettlementsRef.current = []
       setStorageError('')
-      closeSettlementDetail()
+      if (selectedSettlement?.id === record.id) {
+        setSelectedSettlement(null)
+      }
+      afterDelete?.()
     } catch {
       setSavedSettlements(previousSettlements)
       reportStorageError('정산 내역을 삭제하지 못했어요. 다시 시도해 주세요')
     }
+  }
+
+  async function deleteSelectedSettlement() {
+    await deleteSettlementRecord(selectedSettlement, {
+      afterDelete: closeSettlementDetail,
+    })
   }
 
   function startSelectedGame() {
@@ -1110,7 +1123,7 @@ function App() {
           />
         )}
 
-        {storageError && (
+        {storageError && !isHomeStart && (
           <aside className="storage-error-notice" role="alert">
             <span>{storageError}</span>
             {activeTab === tabs.history && (
@@ -1131,6 +1144,8 @@ function App() {
           <HistoryScreen
             items={savedSettlements}
             loading={!storageHydrated}
+            onClearAll={clearSettlementHistory}
+            onDeleteItem={deleteSettlementRecord}
             onOpenDetail={openSettlementDetail}
           />
         )}
@@ -1336,19 +1351,11 @@ function StartScreen({ onStart }) {
       <TdsTitle
         centered
         id="start-title"
-        title={<>오늘 정산,<br /><span>재미있게 결정해요</span></>}
-        subtitle="금액과 참여자를 입력하면 각자 낼 금액을 계산해 드려요"
+        title={<>누가 낼지,<br /><span>재미있게 정해요</span></>}
+        subtitle="금액과 참여자를 입력하면 게임으로 정하고 정산 결과를 바로 보여드려요"
       />
-      <div className="hero-illustration settlement-visual" aria-hidden="true">
-        <div className="settlement-visual-card primary-card">
-          <span className="icon-bubble"><Icon>payments</Icon></span>
-          <i />
-          <i />
-          <strong>₩15,000</strong>
-        </div>
-        <div className="settlement-visual-card back-card" />
-        <span className="settlement-coin coin-one"><Icon>paid</Icon></span>
-        <span className="settlement-coin coin-two"><Icon>person</Icon></span>
+      <div className="hero-asset-visual" aria-hidden="true">
+        <img src="/payer-picker-main-visual.png" alt="" loading="eager" />
       </div>
       <ScreenCTA testId="start-next" onClick={onStart}>정산 시작하기</ScreenCTA>
     </section>
@@ -2650,31 +2657,40 @@ function FinalResultScreen({ amount, participants, settlementResult, settlementT
   )
 }
 
-function HistoryScreen({ items, loading, onOpenDetail }) {
-  const totalAmount = items.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+function HistoryScreen({ items, loading, onClearAll, onDeleteItem, onOpenDetail }) {
+  const [clearAllDialogOpen, setClearAllDialogOpen] = useState(false)
+
+  async function confirmClearAll() {
+    await onClearAll()
+    setClearAllDialogOpen(false)
+  }
+
   return (
     <>
       <TopBar title="정산 내역" progress="전체" />
       <section className="screen history-screen" aria-labelledby="history-title">
-        <h1 className="sr-only">정산 내역</h1>
-        <div className="monthly-card">
-          <span>누적 정산 금액</span>
-          <h1 id="history-title">{formatWon(totalAmount)}</h1>
-          <p><b>총 {items.length}건</b></p>
+        <div className="history-heading-row">
+          <h1 id="history-title">정산 내역</h1>
+          {items.length > 0 && (
+            <Button
+              color="danger"
+              size="small"
+              type="button"
+              variant="weak"
+              onClick={() => setClearAllDialogOpen(true)}
+            >
+              <Icon>delete_sweep</Icon>
+              전체 삭제
+            </Button>
+          )}
         </div>
         <ul className="tds-list history-list">
           {items.map((item) => (
-            <ListRow
-              as="button"
-              className="surface-row history-row"
+            <SwipeableHistoryRow
+              item={item}
               key={item.id}
-              left={<span className="icon-bubble"><Icon>receipt_long</Icon></span>}
-              contents={<TextStack description={formatWon(item.amount)} meta={new Date(item.completedAt).toLocaleDateString('ko-KR')} title={item.title || item.modeLabel} />}
-              right={<small>{item.participants.length}명 참여</small>}
-              type="button"
-              withArrow
-              withTouchEffect
-              onClick={() => onOpenDetail(item)}
+              onDelete={onDeleteItem}
+              onOpen={onOpenDetail}
             />
           ))}
         </ul>
@@ -2682,7 +2698,112 @@ function HistoryScreen({ items, loading, onOpenDetail }) {
         {!loading && items.length === 0 && <div className="state-grid"><span>아직 정산 내역이 없어요</span></div>}
         {items.length >= 2 && <HistoryBanner />}
       </section>
+      <ConfirmDialog
+        closeOnBackEvent
+        closeOnDimmerClick
+        description="저장된 모든 정산 기록을 한 번에 삭제해요."
+        open={clearAllDialogOpen}
+        title="모든 정산 내역을 삭제할까요?"
+        onClose={() => setClearAllDialogOpen(false)}
+        cancelButton={(
+          <ConfirmDialog.CancelButton onClick={() => setClearAllDialogOpen(false)}>
+            취소
+          </ConfirmDialog.CancelButton>
+        )}
+        confirmButton={(
+          <ConfirmDialog.ConfirmButton color="danger" onClick={confirmClearAll}>
+            전체 삭제
+          </ConfirmDialog.ConfirmButton>
+        )}
+      />
     </>
+  )
+}
+
+function SwipeableHistoryRow({ item, onDelete, onOpen }) {
+  const startXRef = useRef(null)
+  const [dragOffset, setDragOffset] = useState(0)
+  const [deleteVisible, setDeleteVisible] = useState(false)
+  const title = item.title || item.modeLabel
+  const settledOffset = deleteVisible ? -86 : 0
+
+  function beginSwipe(clientX) {
+    startXRef.current = clientX
+  }
+
+  function moveSwipe(clientX) {
+    if (startXRef.current === null) {
+      return
+    }
+
+    const deltaX = clientX - startXRef.current
+    setDragOffset(Math.max(-96, Math.min(0, deltaX)))
+  }
+
+  function endSwipe() {
+    if (startXRef.current === null) {
+      return
+    }
+
+    setDeleteVisible(dragOffset < -48)
+    setDragOffset(0)
+    startXRef.current = null
+  }
+
+  function openDetail() {
+    if (deleteVisible) {
+      setDeleteVisible(false)
+      return
+    }
+
+    onOpen(item)
+  }
+
+  async function deleteItem() {
+    await onDelete(item)
+    setDeleteVisible(false)
+  }
+
+  return (
+    <li
+      className="history-swipe-item"
+      data-testid={`history-row-${item.id}`}
+      onMouseDown={(event) => beginSwipe(event.clientX)}
+      onMouseMove={(event) => moveSwipe(event.clientX)}
+      onMouseLeave={endSwipe}
+      onMouseUp={endSwipe}
+      onTouchStart={(event) => beginSwipe(event.touches[0].clientX)}
+      onTouchMove={(event) => moveSwipe(event.touches[0].clientX)}
+      onTouchEnd={endSwipe}
+    >
+      <button
+        aria-label={`${title} 삭제`}
+        aria-hidden={!deleteVisible}
+        className="history-row-delete-action"
+        tabIndex={deleteVisible ? 0 : -1}
+        type="button"
+        onClick={deleteItem}
+      >
+        <Icon>delete</Icon>
+        삭제
+      </button>
+      <div
+        className="history-row-slide"
+        style={{ transform: `translateX(${dragOffset || settledOffset}px)` }}
+      >
+        <ListRow
+          as="button"
+          className="surface-row history-row"
+          left={<span className="icon-bubble"><Icon>receipt_long</Icon></span>}
+          contents={<TextStack description={formatWon(item.amount)} meta={new Date(item.completedAt).toLocaleDateString('ko-KR')} title={title} />}
+          right={<small>{item.participants.length}명 참여</small>}
+          type="button"
+          withArrow
+          withTouchEffect
+          onClick={openDetail}
+        />
+      </div>
+    </li>
   )
 }
 
