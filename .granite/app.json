@@ -1,0 +1,9 @@
+{
+  "appName": "nuganellae",
+  "permissions": [
+    {
+      "name": "clipboard",
+      "access": "write"
+    }
+  ]
+}

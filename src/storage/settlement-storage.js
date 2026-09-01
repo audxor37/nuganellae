@@ -1,5 +1,6 @@
 export const storageKeys = {
   draft: 'draft:v1',
+  lastSetup: 'last-setup:v1',
   settlements: 'settlements:v1',
   adFrequency: 'ad-frequency:v1',
   anonymousId: 'anonymous-id:v1',
@@ -34,6 +35,24 @@ function normalizeDraft(value) {
   if (!isFiniteNonNegativeNumber(value.amount)) return null
 
   return value
+}
+
+function normalizeLastSetup(value) {
+  if (!isPlainObject(value) || value.version !== 1) return null
+  if (!isFiniteNonNegativeNumber(value.amount)) return null
+  if (!Array.isArray(value.participants) || value.participants.length < 2 || !value.participants.every(isNonEmptyString)) return null
+  if (!isNonEmptyString(value.settlementMode)) return null
+  if (!isNonEmptyString(value.selectedGameId)) return null
+
+  return {
+    version: 1,
+    amount: value.amount,
+    participants: value.participants,
+    settlementMode: value.settlementMode,
+    selectedGameId: value.selectedGameId,
+    allowReselect: Boolean(value.allowReselect),
+    updatedAt: isNonEmptyString(value.updatedAt) ? value.updatedAt : null,
+  }
 }
 
 function isSettlementRecord(value) {
@@ -116,6 +135,9 @@ export function createSettlementRepository(storage) {
     loadDraft: () => load(storageKeys.draft, null, normalizeDraft),
     saveDraft: (draft) => save(storageKeys.draft, draft),
     removeDraft: () => enqueueWrite(() => storage.removeItem(storageKeys.draft)),
+    loadLastSetup: () => load(storageKeys.lastSetup, null, normalizeLastSetup),
+    saveLastSetup: (setup) => save(storageKeys.lastSetup, setup),
+    removeLastSetup: () => enqueueWrite(() => storage.removeItem(storageKeys.lastSetup)),
     loadSettlements: () => load(storageKeys.settlements, [], normalizeSettlements),
     saveSettlements: (records) => save(storageKeys.settlements, records),
     loadAdFrequency: () =>

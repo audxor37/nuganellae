@@ -2,7 +2,7 @@
 import { getTossShareLink, loadFullScreenAd, saveBase64Data, setClipboardText, share, showFullScreenAd, Storage, TossAds } from '@apps-in-toss/web-framework'
 import { useCallback } from 'react'
 import { useReducer } from 'react'
-import { BottomCTA, BottomSheet, Button, ConfirmDialog, IconButton, ListHeader, ListRow, SegmentedControl, Switch, Tab, TextField, Top, useWebToast } from '@toss/tds-mobile'
+import { BottomCTA, BottomSheet, Button, ConfirmDialog, IconButton, ListHeader, ListRow, Switch, Tab, TextField, Top, useWebToast } from '@toss/tds-mobile'
 import settlementCompleteImage from './assets/settlement-complete.jpg'
 import { getNextAdFrequencyState, shouldShowInterstitial } from './ads/ad-policy'
 import { attachHistoryBanner, createInterstitialAd } from './ads/apps-in-toss-ads'
@@ -16,7 +16,7 @@ import { buildSettlementPreview as buildSettlementPreviewCore, calculateSettleme
 import { createEnvelopeAssignments, createRouletteGradient, getRouletteRotation } from './games/random/mechanics'
 import { blobToBase64, createSettlementImageBlob, deliverSettlementImage } from './results/share'
 import { buildSettlementDeepLink } from './results/share-link'
-import { createSettlementRepository, deriveRecentGroups } from './storage/settlement-storage'
+import { createSettlementRepository } from './storage/settlement-storage'
 import {
   calculateFiveSecondResult,
   calculateTimingResult,
@@ -71,6 +71,8 @@ const adsEnabled = import.meta.env.VITE_ENABLE_ADS === 'true'
 const bannerAdGroupId = import.meta.env.VITE_AIT_BANNER_AD_GROUP_ID
 const interstitialAdGroupId = import.meta.env.VITE_AIT_INTERSTITIAL_AD_GROUP_ID
 const amplitudeApiKey = import.meta.env.VITE_AMPLITUDE_API_KEY
+const materialSymbolsFontCheck = '24px "Material Symbols Outlined"'
+let materialSymbolsReadyPromise
 
 export function sanitizeFileName(title) {
   const cleanedTitle = String(title || '')
@@ -147,8 +149,57 @@ async function saveSettlementImage(payload) {
   })
 }
 
+function isMaterialSymbolsReady() {
+  if (typeof document === 'undefined' || !document.fonts) {
+    return true
+  }
+
+  return document.fonts.check(materialSymbolsFontCheck)
+}
+
+function waitForMaterialSymbols() {
+  if (isMaterialSymbolsReady()) {
+    return Promise.resolve()
+  }
+
+  materialSymbolsReadyPromise ??= document.fonts
+    .load(materialSymbolsFontCheck)
+    .catch(() => undefined)
+
+  return materialSymbolsReadyPromise
+}
+
 function Icon({ children, className = '' }) {
-  return <span aria-hidden="true" className={`material-symbols-outlined ${className}`}>{children}</span>
+  const [iconFontReady, setIconFontReady] = useState(isMaterialSymbolsReady)
+
+  useEffect(() => {
+    if (iconFontReady) {
+      return undefined
+    }
+
+    let mounted = true
+    waitForMaterialSymbols().then(() => {
+      if (mounted) {
+        setIconFontReady(true)
+      }
+    })
+
+    return () => {
+      mounted = false
+    }
+  }, [iconFontReady])
+
+  const iconName = String(children)
+
+  return (
+    <span
+      aria-hidden="true"
+      className={`material-symbols-outlined ${iconFontReady ? 'icon-font-ready' : 'icon-font-pending'} ${className}`}
+      data-icon={children}
+    >
+      {iconName}
+    </span>
+  )
 }
 
 function TextStack({ title, description, meta }) {
@@ -263,7 +314,7 @@ function App() {
   const [discardResultDialogOpen, setDiscardResultDialogOpen] = useState(false)
   const [restartTargetStep, setRestartTargetStep] = useState(null)
   const [savedSettlements, setSavedSettlements] = useState([])
-  const [savedDraft, setSavedDraft] = useState(null)
+  const [, setSavedDraft] = useState(null)
   const [storageHydrated, setStorageHydrated] = useState(false)
   const [storageError, setStorageError] = useState('')
   const [hydrationRequest, setHydrationRequest] = useState(0)
@@ -303,7 +354,6 @@ function App() {
     [effectiveAmount, participants, settlementMode, winner],
   )
   const selectedGame = getGameById(selectedGameId)
-  const recentGroups = useMemo(() => deriveRecentGroups(savedSettlements), [savedSettlements])
   const currentPlayerIndex = gameSession.currentPlayerIndex
   const gameScores = gameSession.scores
   const rematchScores = gameSession.scores
@@ -801,36 +851,11 @@ function App() {
     navigateHomeStep(steps.title, { resetHistory: true })
   }
 
-  function resumeSettlement() {
-    if (!savedDraft) {
-      navigateHomeStep(steps.title)
-      return
-    }
-
-    setSettlementTitle(savedDraft.settlementTitle || '')
-    setAmount(Number(savedDraft.amount || 0))
-    setParticipants(Array.isArray(savedDraft.participants) && savedDraft.participants.length >= 2
-      ? savedDraft.participants
-      : [...baseParticipants])
-    setSettlementMode(savedDraft.settlementMode || 'exempt')
-    setSelectedGameId(savedDraft.selectedGameId || 'roulette')
-    analyticsRef.current.track('settlement_resumed', { source: 'draft', stage: savedDraft.step || 'setup' })
-    navigateHomeStep(savedDraft.step || steps.title, { resetHistory: true })
-  }
-
   function startNewSettlement() {
     resetSettlementDraft()
     setSavedDraft(null)
     void settlementRepository.removeDraft().catch(() => reportStorageError())
     analyticsRef.current.track('settlement_started', { source: 'home', stage: 'setup' })
-    navigateHomeStep(steps.title, { resetHistory: true })
-  }
-
-  function reuseRecentGroup(group) {
-    resetSettlementDraft()
-    setParticipants(group.participants)
-    setWinner(group.participants[group.participants.length - 1] || '')
-    analyticsRef.current.track('settlement_started', { source: 'recent_group', stage: 'setup' })
     navigateHomeStep(steps.title, { resetHistory: true })
   }
 
@@ -874,7 +899,6 @@ function App() {
 
   function openSettlementDetail(record) {
     setSelectedSettlement(record)
-    setActiveTab(tabs.home)
     setStep(steps.detail)
     setStepHistory([])
   }
@@ -1001,7 +1025,7 @@ function App() {
     setWinner(targetScores[0].participant)
     if (isRematchRound) {
       dispatchGameSession({ type: 'CONFIRM_RESULT' })
-      navigateHomeStep(steps.gameFinalResult, { resetHistory: true })
+      navigateHomeStep(steps.rankingResult)
       return
     }
 
@@ -1043,11 +1067,19 @@ function App() {
           </aside>
         )}
 
-        {activeTab === tabs.history && (
+        {activeTab === tabs.history && step !== steps.detail && (
           <HistoryScreen
             items={savedSettlements}
             loading={!storageHydrated}
             onOpenDetail={openSettlementDetail}
+          />
+        )}
+        {activeTab === tabs.history && step === steps.detail && selectedSettlement && (
+          <DetailScreen
+            record={selectedSettlement}
+            onBack={closeSettlementDetail}
+            onDelete={deleteSelectedSettlement}
+            onShare={() => setShareOpen(true)}
           />
         )}
 
@@ -1061,12 +1093,6 @@ function App() {
 
         {activeTab === tabs.home && step === steps.start && (
           <StartScreen
-            draft={savedDraft}
-            recentGroups={recentGroups}
-            recentSettlement={savedSettlements[0] || null}
-            onOpenRecent={openSettlementDetail}
-            onResume={resumeSettlement}
-            onReuseGroup={reuseRecentGroup}
             onStart={startNewSettlement}
           />
         )}
@@ -1143,8 +1169,8 @@ function App() {
         )}
         {activeTab === tabs.home && step === steps.rouletteResult && (
           selectedGame.id === 'roulette'
-            ? <RouletteResultScreen amount={effectiveAmount} canRetry={allowReselect} settlementMode={settlementMode} settlementResult={settlementResult} winner={winner} onRetry={() => requestResultRestart(steps.roulette)} onNext={() => navigateHomeStep(steps.finalResult, { resetHistory: true })} />
-            : <RandomResultScreen amount={effectiveAmount} canRetry={allowReselect} game={selectedGame} settlementMode={settlementMode} settlementResult={settlementResult} winner={winner} onRetry={() => requestResultRestart(steps.gamePlay)} onNext={() => navigateHomeStep(steps.finalResult, { resetHistory: true })} />
+            ? <RouletteResultScreen amount={effectiveAmount} canRetry={allowReselect} settlementMode={settlementMode} settlementResult={settlementResult} winner={winner} onRetry={() => requestResultRestart(steps.roulette)} onNext={() => navigateHomeStep(steps.gameFinalResult, { resetHistory: true })} />
+            : <RandomResultScreen amount={effectiveAmount} canRetry={allowReselect} game={selectedGame} settlementMode={settlementMode} settlementResult={settlementResult} winner={winner} onRetry={() => requestResultRestart(steps.gamePlay)} onNext={() => navigateHomeStep(steps.gameFinalResult, { resetHistory: true })} />
         )}
         {activeTab === tabs.home && step === steps.finalResult && (
           <FinalResultScreen
@@ -1159,8 +1185,6 @@ function App() {
         {activeTab === tabs.home && step === steps.gameFinalResult && (
           <FinalResultScreen
             amount={effectiveAmount}
-            game={selectedGame}
-            isGameResult
             participants={participants}
             settlementResult={settlementResult}
             settlementTitle={settlementTitle.trim() || '오늘 정산'}
@@ -1168,20 +1192,15 @@ function App() {
             onShare={() => setShareOpen(true)}
           />
         )}
-        {activeTab === tabs.home && step === steps.detail && selectedSettlement && (
-          <DetailScreen
-            record={selectedSettlement}
-            onBack={closeSettlementDetail}
-            onDelete={deleteSelectedSettlement}
-            onShare={() => setShareOpen(true)}
-          />
-        )}
-
         <BottomNav activeTab={activeTab} onNavigate={(tab) => {
           setActiveTab(tab)
           setShareOpen(false)
           setRouletteSpinning(false)
           setStepHistory([])
+          if (tab === tabs.home) {
+            setSelectedSettlement(null)
+            setStep(steps.start)
+          }
         }} />
 
         <ShareSheet
@@ -1255,7 +1274,7 @@ function TopBar({ title, progress, onBack }) {
   )
 }
 
-function StartScreen({ draft, recentGroups, recentSettlement, onOpenRecent, onResume, onReuseGroup, onStart }) {
+function StartScreen({ onStart }) {
   return (
     <section className="screen start-screen" aria-labelledby="start-title">
       <TdsTitle
@@ -1275,40 +1294,7 @@ function StartScreen({ draft, recentGroups, recentSettlement, onOpenRecent, onRe
         <span className="settlement-coin coin-one"><Icon>paid</Icon></span>
         <span className="settlement-coin coin-two"><Icon>person</Icon></span>
       </div>
-      {draft && (
-        <button className="recent-settlement-card draft-card" type="button" onClick={onResume}>
-          <span className="icon-bubble"><Icon>edit_note</Icon></span>
-          <span className="recent-settlement-copy">
-            <small>작성 중인 정산</small>
-            <strong>{draft.settlementTitle || '이름 없는 정산'}</strong>
-            <span>{draft.amount ? formatWon(draft.amount) : '금액 입력 전'} · {draft.participants?.length || 0}명</span>
-          </span>
-          <Icon>chevron_right</Icon>
-        </button>
-      )}
-      {draft && <Button color="primary" display="full" size="large" type="button" variant="weak" onClick={onResume}>이어서 정산하기</Button>}
-      {recentSettlement && (
-        <button className="recent-settlement-card" type="button" onClick={() => onOpenRecent(recentSettlement)}>
-          <span className="icon-bubble"><Icon>history</Icon></span>
-          <span className="recent-settlement-copy">
-            <small>최근 정산</small>
-            <strong>{recentSettlement.title}</strong>
-            <span>{formatWon(recentSettlement.amount)} · {recentSettlement.participants.length}명</span>
-          </span>
-          <Icon>chevron_right</Icon>
-        </button>
-      )}
-      {recentGroups?.length > 0 && (
-        <div className="recent-group-list" aria-label="최근 모임">
-          <small>최근 모임으로 빠르게 시작</small>
-          {recentGroups.slice(0, 2).map((group) => (
-            <Button color="dark" key={group.id} size="small" type="button" variant="weak" onClick={() => onReuseGroup(group)}>
-              {group.participants.join(', ')} · {group.usageCount}회
-            </Button>
-          ))}
-        </div>
-      )}
-      <ScreenCTA testId="start-settlement" onClick={onStart}>정산 시작하기</ScreenCTA>
+      <ScreenCTA testId="start-next" onClick={onStart}>정산 시작하기</ScreenCTA>
     </section>
   )
 }
@@ -1426,11 +1412,6 @@ function MethodScreen({ selected, onSelect, onNext }) {
   return (
     <section className="screen method-screen" aria-labelledby="method-title">
       <TdsTitle id="method-title" subtitle="원하는 정산 방식을 선택해 주세요." title="어떻게 나눌까요?" />
-      <SegmentedControl alignment="fluid" value={selected} onChange={onSelect}>
-        {settlementModes.map((mode) => (
-          <SegmentedControl.Item key={mode.id} value={mode.id}>{mode.title}</SegmentedControl.Item>
-        ))}
-      </SegmentedControl>
       <ul className="tds-list method-list">
         {settlementModes.map((mode) => (
           <ListRow
@@ -1781,7 +1762,25 @@ function RankingGamePreview({ game }) {
 
   return (
     <div className={`game-play-stage ${game.id}-stage countdown-preview`} aria-hidden="true">
-      {game.id === 'reaction' && <button className="reaction-pad waiting" type="button" disabled>기다려주세요</button>}
+      {game.id === 'reaction' && (
+        <>
+          <div className="reaction-turn-card">
+            <span className="avatar mini">?</span>
+            <span>
+              <small>현재 순서</small>
+              <strong>참여자님의 차례</strong>
+            </span>
+            <i aria-hidden="true" />
+          </div>
+          <button className="reaction-pad waiting" type="button" disabled>
+            <Icon>hourglass_empty</Icon>
+          </button>
+          <div className="reaction-copy">
+            <strong>기다려주세요</strong>
+            <span>신호가 뜨면 바로 탭하세요</span>
+          </div>
+        </>
+      )}
       {game.id === 'timingStop' && <div className="timing-track"><i /><b /></div>}
       {game.id === 'numberOrder' && (
         <div className="number-board">
@@ -2098,7 +2097,7 @@ function TimingStopGameScreen({ game, participant, onScore }) {
           <span>{result ? `중앙에서 ${result.distance.toFixed(1)}pt 차이` : '포인터가 타깃 중앙에 겹치는 순간을 노려보세요.'}</span>
         </div>
       </div>
-      {/* {result && (
+      {result && (
         <div className="timing-result-panel" data-testid="timing-result-panel" aria-live="polite">
           <span className={`timing-grade-badge ${result.grade.toLowerCase()}`}>{getTimingGradeLabel(result.grade)}</span>
           <span>
@@ -2110,7 +2109,7 @@ function TimingStopGameScreen({ game, participant, onScore }) {
             <strong>중앙에서 {result.distance.toFixed(1)}pt 차이</strong>
           </span>
         </div>
-      )} */}
+      )}
       <Button data-testid="timing-stop" color="primary" display="full" size="large" type="button" disabled={done} onClick={stop}>멈추기</Button>
     </div>
   )
@@ -2517,7 +2516,7 @@ function RandomResultScreen({ amount, canRetry, game, settlementMode, settlement
   )
 }
 
-function FinalResultScreen({ amount, game, isGameResult = false, participants, settlementResult, settlementTitle, onRestart, onShare }) {
+function FinalResultScreen({ amount, participants, settlementResult, settlementTitle, onRestart, onShare }) {
   const { openToast } = useWebToast({ exitOnUnmount: false })
   const [imageSaving, setImageSaving] = useState(false)
 
@@ -2544,10 +2543,10 @@ function FinalResultScreen({ amount, game, isGameResult = false, participants, s
   return (
     <section className="screen final-screen" aria-labelledby="final-title">
       <div className="success-icon"><Icon>check_circle</Icon></div>
-      <TdsTitle centered id="final-title" subtitle="총 정산 금액" title={isGameResult ? '게임 정산이 완료됐어요' : '정산이 완료됐어요'} />
+      <TdsTitle centered id="final-title" subtitle="총 정산 금액" title="정산이 완료됐어요" />
       <strong className="settlement-title">{settlementTitle}</strong>
       <strong className="big-amount">{formatWon(amount)}</strong>
-      <span className="mode-badge"><Icon>{isGameResult ? 'sports_esports' : 'payments'}</Icon> {isGameResult ? `${game?.title || '게임'} ${settlementResult.modeLabel} 적용` : `${settlementResult.modeLabel} 방식 적용`}</span>
+      <span className="mode-badge"><Icon>payments</Icon> {settlementResult.modeLabel} 방식 적용</span>
       <ListHeader
         className="compact-list-header"
         title={<ListHeader.TitleParagraph>참여자별 금액</ListHeader.TitleParagraph>}

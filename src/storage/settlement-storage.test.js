@@ -36,6 +36,7 @@ describe('settlement storage repository', () => {
   test('clears only keys owned by this app', async () => {
     const storage = createMemoryStorage({
       [storageKeys.draft]: '{}',
+      [storageKeys.lastSetup]: '{}',
       [storageKeys.settlements]: '[]',
       'another-feature': 'keep',
     })
@@ -45,6 +46,7 @@ describe('settlement storage repository', () => {
 
     expect(storage.values.get('another-feature')).toBe('keep')
     expect(storage.values.has(storageKeys.draft)).toBe(false)
+    expect(storage.values.has(storageKeys.lastSetup)).toBe(false)
     expect(storage.values.has(storageKeys.settlements)).toBe(false)
   })
 
@@ -122,6 +124,44 @@ describe('settlement storage repository', () => {
     await expect(
       createSettlementRepository(obsoleteStorage).loadDraft(),
     ).resolves.toBeNull()
+  })
+
+  test('loads and saves the last quick-start setup', async () => {
+    const storedSetup = {
+      version: 1,
+      amount: 84000,
+      participants: ['민수', '지훈', '수진'],
+      settlementMode: 'exempt',
+      selectedGameId: 'roulette',
+      allowReselect: true,
+      updatedAt: '2026-08-31T10:00:00.000Z',
+    }
+    const storage = createMemoryStorage({
+      [storageKeys.lastSetup]: JSON.stringify(storedSetup),
+    })
+    const repository = createSettlementRepository(storage)
+
+    await expect(repository.loadLastSetup()).resolves.toEqual(storedSetup)
+    await repository.saveLastSetup({ ...storedSetup, selectedGameId: 'reaction' })
+
+    expect(storage.values.get(storageKeys.lastSetup)).toBe(JSON.stringify({
+      ...storedSetup,
+      selectedGameId: 'reaction',
+    }))
+  })
+
+  test('rejects incompatible last quick-start setup data', async () => {
+    const storage = createMemoryStorage({
+      [storageKeys.lastSetup]: JSON.stringify({
+        version: 1,
+        amount: 50000,
+        participants: ['민수'],
+        settlementMode: 'exempt',
+        selectedGameId: 'roulette',
+      }),
+    })
+
+    await expect(createSettlementRepository(storage).loadLastSetup()).resolves.toBeNull()
   })
 })
 
