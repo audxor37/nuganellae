@@ -301,6 +301,37 @@ test('deletes a saved settlement from the history list after swiping its row', a
   )
 })
 
+test('keeps the delete action open when a history row swipe ends immediately after moving', async () => {
+  bridgeMocks.Storage.getItem.mockImplementation(async (key) => {
+    if (key === storageKeys.settlements) {
+      return JSON.stringify([{
+        id: 'quick-swipe-delete',
+        title: '빠르게 민 정산',
+        amount: 42000,
+        participants: ['민수', '지훈'],
+        mode: 'equal',
+        modeLabel: '똑같이 나누기',
+        selectedParticipant: '',
+        lineItems: [],
+        completedAt: '2026-07-30T10:00:00.000Z',
+      }])
+    }
+    return null
+  })
+
+  renderApp()
+  fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
+
+  const row = await screen.findByTestId('history-row-quick-swipe-delete')
+  act(() => {
+    fireEvent.touchStart(row, { touches: [{ clientX: 220 }] })
+    fireEvent.touchMove(row, { touches: [{ clientX: 120 }] })
+    fireEvent.touchEnd(row)
+  })
+
+  expect(screen.getByRole('button', { name: '빠르게 민 정산 삭제' })).toBeInTheDocument()
+})
+
 test('opens and safely deletes a real saved settlement detail', async () => {
   bridgeMocks.Storage.getItem.mockImplementation(async (key) => {
     if (key === storageKeys.settlements) {
@@ -929,12 +960,12 @@ test('selects exempt settlement and shows roulette animation before the result',
   fireEvent.click(screen.getByRole('button', { name: /게임 시작하기/ }))
   fireEvent.click(screen.getByRole('button', { name: /룰렛 돌리기/ }))
 
-  expect(screen.getByText('룰렛 돌리는 중')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /룰렛 돌리는 중/ })).toBeDisabled()
+  expect(screen.getByText('룰렛 도는 중')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /룰렛 도는 중/ })).toBeDisabled()
   expect(screen.queryByRole('heading', { name: /영희 님이 면제됐어요/ })).not.toBeInTheDocument()
 
   await act(async () => {
-    vi.advanceTimersByTime(2200)
+    vi.advanceTimersByTime(2800)
   })
 
   expect(screen.getByRole('heading', { name: '게임 정산이 완료됐어요' })).toBeInTheDocument()
@@ -962,7 +993,7 @@ test('opens the share sheet directly from the integrated game result', async () 
   fireEvent.click(screen.getByRole('button', { name: /룰렛 돌리기/ }))
 
   await act(async () => {
-    vi.advanceTimersByTime(2200)
+    vi.advanceTimersByTime(2800)
   })
   vi.useRealTimers()
 
@@ -1008,7 +1039,7 @@ async function openFinalShareSheet() {
   fireEvent.click(screen.getByRole('button', { name: /룰렛 돌리기/ }))
 
   await act(async () => {
-    vi.advanceTimersByTime(2200)
+    vi.advanceTimersByTime(2800)
   })
   vi.useRealTimers()
 
@@ -1083,6 +1114,54 @@ test('bottom navigation opens truthful history and settings screens', () => {
   fireEvent.click(screen.getByRole('button', { name: '설정' }))
   expect(screen.getByRole('heading', { name: '설정' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /게임소개/ })).toBeInTheDocument()
+})
+
+test('history screen uses an opaque app surface behind saved settlement rows', () => {
+  const styles = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8')
+
+  expect(styles).toMatch(/\.history-screen\s*\{[^}]*background:\s*var\(--surface-app\)/s)
+  expect(styles).toMatch(/\.history-swipe-item\s*\{[^}]*background:\s*var\(--surface\)/s)
+})
+
+test('history row delete action is sized only while peeking or visible', () => {
+  const styles = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8')
+
+  expect(styles).toMatch(/\.history-row-delete-action\s*\{[^}]*width:\s*0/s)
+  expect(styles).toMatch(/\.history-row-delete-action\s*\{[^}]*min-width:\s*0/s)
+  expect(styles).toMatch(/\.history-row-delete-action\s*\{[^}]*overflow:\s*hidden/s)
+  expect(styles).toMatch(/\.history-row-delete-action\s*\{[^}]*visibility:\s*hidden/s)
+  expect(styles).toMatch(/\.history-swipe-item\.delete-peek\s+\.history-row-delete-action\s*\{[^}]*width:\s*96px/s)
+  expect(styles).toMatch(/\.history-swipe-item\.delete-peek\s+\.history-row-delete-action\s*\{[^}]*visibility:\s*visible/s)
+})
+
+test('bottom navigation warns that leaving game flow resets the current game', () => {
+  renderApp()
+
+  startSettlement()
+  enterAmountWithQuickButton()
+  fireEvent.click(screen.getByTestId('participants-next'))
+  fireEvent.click(screen.getByTestId('method-exempt'))
+  fireEvent.click(screen.getByTestId('method-next'))
+  fireEvent.click(screen.getByTestId('exempt-next'))
+
+  expect(screen.getByRole('heading', { name: '게임 선택하기' })).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
+
+  const dialog = screen.getByRole('dialog', { name: '진행 중인 게임을 초기화할까요?' })
+  expect(within(dialog).getByText('정산하기 탭이 아니면 진행 중인 게임이 초기화돼요.')).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: '게임 선택하기' })).toBeInTheDocument()
+
+  fireEvent.click(within(dialog).getByRole('button', { name: '계속하기' }))
+  expect(screen.queryByRole('dialog', { name: '진행 중인 게임을 초기화할까요?' })).not.toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: '게임 선택하기' })).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: '설정' }))
+  fireEvent.click(within(screen.getByRole('dialog', { name: '진행 중인 게임을 초기화할까요?' })).getByRole('button', { name: '초기화하고 이동' }))
+
+  expect(screen.getByRole('heading', { name: '설정' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '정산하기' }))
+  expect(screen.getByRole('button', { name: /정산 시작하기/ })).toBeInTheDocument()
 })
 
 test('settings only exposes game intro terms and privacy policy', () => {
@@ -1617,7 +1696,7 @@ test('enabled result reselection requires confirmation before discarding the off
   fireEvent.click(screen.getByTestId('roulette-wheel-draw'))
 
   await act(async () => {
-    vi.advanceTimersByTime(2200)
+    vi.advanceTimersByTime(2800)
   })
 
   fireEvent.click(screen.getByRole('button', { name: /다시 뽑기/ }))
@@ -1648,7 +1727,7 @@ test('final settlement locks the completed flow without a top back button', asyn
   fireEvent.click(screen.getByRole('button', { name: /룰렛 돌리기/ }))
 
   await act(async () => {
-    vi.advanceTimersByTime(2200)
+    vi.advanceTimersByTime(2800)
   })
   vi.useRealTimers()
 
@@ -1678,7 +1757,7 @@ test('starting a new settlement from the completed screen clears the previous dr
   fireEvent.click(screen.getByRole('button', { name: /룰렛 돌리기/ }))
 
   await act(async () => {
-    vi.advanceTimersByTime(2200)
+    vi.advanceTimersByTime(2800)
   })
   vi.useRealTimers()
 
@@ -1751,7 +1830,7 @@ test('disabled result reselection hides result back navigation and retry actions
   fireEvent.click(screen.getByRole('button', { name: /룰렛 돌리기/ }))
 
   await act(async () => {
-    vi.advanceTimersByTime(2200)
+    vi.advanceTimersByTime(2800)
   })
   vi.useRealTimers()
 
@@ -1936,6 +2015,7 @@ test('timing stop rules explain the 100 point center target scoring', () => {
   fireEvent.click(screen.getByTestId('game-card-timingStop'))
   fireEvent.click(screen.getByTestId('game-select-next'))
 
+  expect(screen.getByText(/움직이는 포인터를 보고 멈추는 게임이에요/)).toBeInTheDocument()
   expect(screen.getByText(/중앙에 가까울수록 100점에 가까워지고, 한 번의 정지/)).toBeInTheDocument()
 })
 
@@ -1994,6 +2074,40 @@ test('timing stop starts after the countdown finishes', async () => {
   expect(screen.getByTestId('complete-game-turn')).not.toBeDisabled()
 })
 
+test('timing stop freezes immediately on pointer down and keeps the stopped position', async () => {
+  vi.useFakeTimers()
+  startRankingGameForExecution('timingStop')
+
+  await advanceGameCountdown()
+
+  const stopButton = screen.getByTestId('timing-stop')
+  expect(screen.getByText('100점')).toBeInTheDocument()
+  expect(screen.getByTestId('complete-game-turn')).toBeDisabled()
+
+  await act(async () => {
+    vi.advanceTimersByTime(360)
+  })
+
+  const pointer = document.querySelector('.timing-pointer')
+  const positionBeforeStop = pointer.style.left
+
+  fireEvent.pointerDown(stopButton)
+
+  const resultPanel = screen.getByTestId('timing-result-panel')
+  expect(resultPanel).toBeInTheDocument()
+  expect(screen.getByText('기록됐어요. 이번 차례 완료를 눌러 다음 사람에게 넘겨주세요.')).toBeInTheDocument()
+  expect(screen.getByTestId('complete-game-turn')).not.toBeDisabled()
+
+  fireEvent.click(stopButton)
+
+  await act(async () => {
+    vi.advanceTimersByTime(600)
+  })
+
+  expect(pointer.style.left).toBe(positionBeforeStop)
+  expect(screen.getAllByTestId('timing-result-panel')).toHaveLength(1)
+})
+
 test('timing stop position follows a continuous cosine path inside the track', () => {
   const at33ms = getTimingStopPosition(33)
   const at34ms = getTimingStopPosition(34)
@@ -2042,6 +2156,32 @@ test('roulette quick mode uses the same fair draw and reveals the result quickly
 
   await act(async () => {
     vi.advanceTimersByTime(400)
+  })
+
+  expect(screen.getByRole('heading', { name: /영희 님이 면제됐어요/ })).toBeInTheDocument()
+})
+
+test('roulette wheel draw keeps the suspense longer than quick draw', async () => {
+  vi.useFakeTimers()
+  openGameSelectForExecution()
+
+  fireEvent.click(screen.getByTestId('game-card-roulette'))
+  fireEvent.click(screen.getByTestId('game-select-next'))
+  fireEvent.click(screen.getByTestId('roulette-wheel-draw'))
+
+  expect(screen.getByText('누구에게 멈출까요?')).toBeInTheDocument()
+  expect(document.querySelector('.roulette-stage')).toHaveClass('spinning')
+  expect(screen.getByRole('button', { name: /룰렛 도는 중/ })).toBeDisabled()
+
+  await act(async () => {
+    vi.advanceTimersByTime(2200)
+  })
+
+  expect(screen.getByText('누구에게 멈출까요?')).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: /영희 님이 면제됐어요/ })).not.toBeInTheDocument()
+
+  await act(async () => {
+    vi.advanceTimersByTime(600)
   })
 
   expect(screen.getByRole('heading', { name: /영희 님이 면제됐어요/ })).toBeInTheDocument()

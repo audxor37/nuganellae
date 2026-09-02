@@ -34,6 +34,11 @@ const tabs = {
   settings: 'settings',
 }
 
+const rouletteDurations = {
+  quick: 350,
+  wheel: 2800,
+}
+
 const tabItems = [
   { id: tabs.home, icon: 'payments', label: '정산하기' },
   { id: tabs.history, icon: 'history', label: '정산 내역' },
@@ -311,7 +316,7 @@ function App() {
   const [shareOpen, setShareOpen] = useState(false)
   const [stepHistory, setStepHistory] = useState([])
   const [rouletteSpinning, setRouletteSpinning] = useState(false)
-  const [rouletteDuration, setRouletteDuration] = useState(2000)
+  const [rouletteDuration, setRouletteDuration] = useState(rouletteDurations.wheel)
   const [rouletteRotation, setRouletteRotation] = useState(0)
   const [randomError, setRandomError] = useState('')
   const [selectedGameId, setSelectedGameId] = useState('roulette')
@@ -320,6 +325,7 @@ function App() {
   const [leaveGameDialogOpen, setLeaveGameDialogOpen] = useState(false)
   const [discardResultDialogOpen, setDiscardResultDialogOpen] = useState(false)
   const [restartTargetStep, setRestartTargetStep] = useState(null)
+  const [pendingResetTab, setPendingResetTab] = useState(null)
   const [savedSettlements, setSavedSettlements] = useState([])
   const [savedDraft, setSavedDraft] = useState(null)
   const [appSettings, setAppSettings] = useState(defaultAppSettings)
@@ -374,6 +380,17 @@ function App() {
   const isFinalStep = step === steps.finalResult || step === steps.gameFinalResult
   const isResultStep = step === steps.rouletteResult || step === steps.rankingResult || step === steps.tieRematch
   const isGameInProgressStep = step === steps.participantTurn || step === steps.gamePlay || step === steps.roulette
+  const isGameFlowStep = [
+    steps.gameSelect,
+    steps.gameRules,
+    steps.playOrder,
+    steps.participantTurn,
+    steps.gamePlay,
+    steps.rankingResult,
+    steps.tieRematch,
+    steps.roulette,
+    steps.rouletteResult,
+  ].includes(step)
   const isHomeStart = activeTab === tabs.home && step === steps.start
   const showHomeTopBar = activeTab === tabs.home && step !== steps.start && step !== steps.detail && !isFinalStep && !(isResultStep && !allowReselect)
 
@@ -713,6 +730,45 @@ function App() {
     navigateHomeStep(steps.gameSelect, { resetHistory: true })
   }
 
+  function applyTabNavigation(tab) {
+    setActiveTab(tab)
+    setShareOpen(false)
+    setRouletteSpinning(false)
+    setStepHistory([])
+    if (tab === tabs.home) {
+      setSelectedSettlement(null)
+      setStep(steps.start)
+    }
+  }
+
+  function navigateTab(tab) {
+    if (tab === activeTab) {
+      return
+    }
+
+    if (activeTab === tabs.home && tab !== tabs.home && isGameFlowStep) {
+      setPendingResetTab(tab)
+      return
+    }
+
+    applyTabNavigation(tab)
+  }
+
+  function closeGameFlowResetDialog() {
+    setPendingResetTab(null)
+  }
+
+  function confirmGameFlowReset() {
+    const targetTab = pendingResetTab
+
+    setPendingResetTab(null)
+    resetSettlementDraft(appSettings)
+    setSelectedSettlement(null)
+    if (targetTab) {
+      applyTabNavigation(targetTab)
+    }
+  }
+
   function requestResultRestart(targetStep) {
     setRestartTargetStep(targetStep)
     setDiscardResultDialogOpen(true)
@@ -730,7 +786,7 @@ function App() {
     setRestartTargetStep(null)
     setWinner(participants[participants.length - 1] || '')
     setRouletteSpinning(false)
-    setRouletteDuration(2000)
+    setRouletteDuration(rouletteDurations.wheel)
     setRouletteRotation(0)
     setRandomError('')
 
@@ -799,7 +855,7 @@ function App() {
     try {
       const selectedParticipant = pickOne(participants)
       const selectedIndex = participants.indexOf(selectedParticipant)
-      const duration = mode === 'quick' ? 350 : 2000
+      const duration = mode === 'quick' ? rouletteDurations.quick : rouletteDurations.wheel
 
       setWinner(selectedParticipant)
       setRouletteDuration(duration)
@@ -808,7 +864,7 @@ function App() {
         + getRouletteRotation({
           participantCount: participants.length,
           selectedIndex,
-          turns: mode === 'quick' ? 1 : 4,
+          turns: mode === 'quick' ? 1 : 5,
         })
       ))
       setRandomError('')
@@ -834,7 +890,7 @@ function App() {
     setAllowReselect(settings.defaultAllowReselect)
     setSelectedGameId(settings.defaultGameId)
     setRouletteSpinning(false)
-    setRouletteDuration(2000)
+    setRouletteDuration(rouletteDurations.wheel)
     setRouletteRotation(0)
     setRandomError('')
     setShareOpen(false)
@@ -1263,16 +1319,7 @@ function App() {
             onShare={() => setShareOpen(true)}
           />
         )}
-        <BottomNav activeTab={activeTab} onNavigate={(tab) => {
-          setActiveTab(tab)
-          setShareOpen(false)
-          setRouletteSpinning(false)
-          setStepHistory([])
-          if (tab === tabs.home) {
-            setSelectedSettlement(null)
-            setStep(steps.start)
-          }
-        }} />
+        <BottomNav activeTab={activeTab} onNavigate={navigateTab} />
 
         <ShareSheet
           amount={selectedSettlement && step === steps.detail ? selectedSettlement.amount : effectiveAmount}
@@ -1301,6 +1348,24 @@ function App() {
           confirmButton={(
             <ConfirmDialog.ConfirmButton color="danger" onClick={confirmLeaveGame}>
               나가기
+            </ConfirmDialog.ConfirmButton>
+          )}
+        />
+        <ConfirmDialog
+          closeOnBackEvent
+          closeOnDimmerClick
+          description="정산하기 탭이 아니면 진행 중인 게임이 초기화돼요."
+          open={pendingResetTab != null}
+          title="진행 중인 게임을 초기화할까요?"
+          onClose={closeGameFlowResetDialog}
+          cancelButton={(
+            <ConfirmDialog.CancelButton onClick={closeGameFlowResetDialog}>
+              계속하기
+            </ConfirmDialog.CancelButton>
+          )}
+          confirmButton={(
+            <ConfirmDialog.ConfirmButton color="danger" onClick={confirmGameFlowReset}>
+              초기화하고 이동
             </ConfirmDialog.ConfirmButton>
           )}
         />
@@ -1622,10 +1687,13 @@ function GameRulesScreen({ amount, game, participants, settlementMode, winner, o
   const targetRuleCopy = settlementMode === 'extra'
     ? '순위형 게임은 꼴등에게 2인분 부담을 적용해요.'
     : '순위형 게임은 1등에게 선택한 정산 방식을 적용해요.'
+  const ruleSubtitle = game.id === 'timingStop'
+    ? `${game.description} 움직이는 포인터를 보고 멈추는 게임이에요.`
+    : game.description
 
   return (
     <section className="screen game-rules-screen" aria-labelledby="game-rules-title">
-      <TdsTitle id="game-rules-title" subtitle={game.description} title="게임 규칙 안내" />
+      <TdsTitle id="game-rules-title" subtitle={ruleSubtitle} title="게임 규칙 안내" />
       <div className="game-hero-card">
         <span className="game-icon large"><Icon>{game.icon}</Icon></span>
         <strong>{game.title}</strong>
@@ -2093,6 +2161,7 @@ function TimingStopGameScreen({ game, participant, onScore }) {
   const [result, setResult] = useState(null)
   const frameRef = useRef(null)
   const positionRef = useRef(0)
+  const stoppedRef = useRef(false)
   const direction = useMemo(() => getTimingStartDirection(), [participant])
 
   useEffect(() => {
@@ -2100,9 +2169,14 @@ function TimingStopGameScreen({ game, participant, onScore }) {
       return undefined
     }
 
+    stoppedRef.current = false
     const startedAt = performance.now()
 
     function animate(timestamp) {
+      if (stoppedRef.current) {
+        return
+      }
+
       const nextPosition = calculateTimingStopPosition(timestamp - startedAt, 1600, direction)
       positionRef.current = nextPosition
       setPosition(nextPosition)
@@ -2118,9 +2192,15 @@ function TimingStopGameScreen({ game, participant, onScore }) {
     }
   }, [direction, done, participant])
 
-  function stop() {
-    if (done) {
+  function finalizeStop() {
+    if (done || stoppedRef.current) {
       return
+    }
+
+    stoppedRef.current = true
+    if (frameRef.current != null) {
+      window.cancelAnimationFrame(frameRef.current)
+      frameRef.current = null
     }
 
     const finalPosition = positionRef.current
@@ -2151,13 +2231,13 @@ function TimingStopGameScreen({ game, participant, onScore }) {
       </div>
       <div className="timing-arena">
         <div className="timing-track">
-          <span className="timing-target-zone" />
+          <span className="timing-target-zone"><span>100점</span></span>
           <span className="timing-center-line" />
           <span className="timing-pointer" style={{ left: `${position}%` }} />
         </div>
         <div className="timing-status-copy">
           <strong>{result ? `${result.scoreValue.toFixed(1)}점` : '중앙에 맞춰 멈춰요'}</strong>
-          <span>{result ? `중앙에서 ${result.distance.toFixed(1)}pt 차이` : '포인터가 타깃 중앙에 겹치는 순간을 노려보세요.'}</span>
+          <span>{result ? '기록됐어요. 이번 차례 완료를 눌러 다음 사람에게 넘겨주세요.' : '포인터가 타깃 중앙에 겹치는 순간을 노려보세요.'}</span>
         </div>
       </div>
       {result && (
@@ -2173,7 +2253,7 @@ function TimingStopGameScreen({ game, participant, onScore }) {
           </span>
         </div>
       )}
-      <Button data-testid="timing-stop" color="primary" display="full" size="large" type="button" disabled={done} onClick={stop}>멈추기</Button>
+      <Button data-testid="timing-stop" color="primary" display="full" size="large" type="button" disabled={done} onPointerDown={finalizeStop} onClick={finalizeStop}>멈추기</Button>
     </div>
   )
 }
@@ -2436,19 +2516,20 @@ function TieRematchScreen({ settlementMode, tiedScores, onStartRematch }) {
 
 function RouletteScreen({ amount, duration, error, participants, rotation, settlementMode, spinning, onSpin }) {
   const gradient = createRouletteGradient(participants.length)
+  const stageClassName = spinning ? 'roulette-stage spinning' : 'roulette-stage'
 
   return (
     <section className="screen roulette-screen" aria-labelledby="roulette-title">
-      <TdsTitle centered id="roulette-title" subtitle={spinning ? '잠시만 기다려 주세요. 정산 대상자를 고르고 있어요.' : `${getSettlementModeLabel(settlementMode)} 대상자를 룰렛으로 정해요.`} title="오늘의 정산 결과는?" />
+      <TdsTitle centered id="roulette-title" subtitle={spinning ? '누구에게 멈출까요?' : `${getSettlementModeLabel(settlementMode)} 대상자를 룰렛으로 정해요.`} title="오늘의 정산 결과는?" />
       <div className="fairness-card" role="note">
         <Icon>verified_user</Icon>
         <span>
           <strong>모든 참여자의 선택 확률은 1/{participants.length}이에요.</strong>
-          <small>결과를 먼저 확정한 뒤 룰렛이 선택된 구간에 멈춰요.</small>
+          <small>룰렛은 공정한 결과를 향해 천천히 멈춰요.</small>
         </span>
       </div>
       {error && <p className="game-error" role="alert">{error}</p>}
-      <div className="roulette-stage">
+      <div className={stageClassName}>
         <div className="roulette-pointer" aria-hidden="true"><Icon>arrow_drop_down</Icon></div>
         <div
           className={spinning ? 'roulette-wheel spinning' : 'roulette-wheel'}
@@ -2462,7 +2543,7 @@ function RouletteScreen({ amount, duration, error, participants, rotation, settl
         >
           <div className="roulette-core">
             <Icon>{spinning ? 'sync' : 'published_with_changes'}</Icon>
-            <strong aria-live="polite">{spinning ? '선택 중' : '준비 완료'}</strong>
+            <strong aria-live="polite">{spinning ? '고르는 중' : '돌릴 준비'}</strong>
           </div>
           {participants.map((participant, index) => (
             <span key={participant} style={{ '--slot': index }}>{participant}</span>
@@ -2486,7 +2567,7 @@ function RouletteScreen({ amount, duration, error, participants, rotation, settl
           type="button"
           onClick={() => onSpin('wheel')}
         >
-          <Icon>{spinning ? 'sync' : 'refresh'}</Icon> {spinning ? '룰렛 돌리는 중' : '룰렛 돌리기'}
+          <Icon>{spinning ? 'sync' : 'refresh'}</Icon> {spinning ? '룰렛 도는 중' : '룰렛 돌리기'}
         </Button>
         <Button
           data-testid="roulette-quick-draw"
@@ -2667,7 +2748,6 @@ function HistoryScreen({ items, loading, onClearAll, onDeleteItem, onOpenDetail 
 
   return (
     <>
-      <TopBar title="정산 내역" progress="전체" />
       <section className="screen history-screen" aria-labelledby="history-title">
         <div className="history-heading-row">
           <h1 id="history-title">정산 내역</h1>
@@ -2722,13 +2802,16 @@ function HistoryScreen({ items, loading, onClearAll, onDeleteItem, onOpenDetail 
 
 function SwipeableHistoryRow({ item, onDelete, onOpen }) {
   const startXRef = useRef(null)
+  const lastOffsetRef = useRef(0)
   const [dragOffset, setDragOffset] = useState(0)
   const [deleteVisible, setDeleteVisible] = useState(false)
   const title = item.title || item.modeLabel
-  const settledOffset = deleteVisible ? -86 : 0
+  const deleteActionWidth = 96
+  const settledOffset = deleteVisible ? -deleteActionWidth : 0
 
   function beginSwipe(clientX) {
     startXRef.current = clientX
+    lastOffsetRef.current = deleteVisible ? -deleteActionWidth : 0
   }
 
   function moveSwipe(clientX) {
@@ -2737,7 +2820,9 @@ function SwipeableHistoryRow({ item, onDelete, onOpen }) {
     }
 
     const deltaX = clientX - startXRef.current
-    setDragOffset(Math.max(-96, Math.min(0, deltaX)))
+    const nextOffset = Math.max(-deleteActionWidth, Math.min(0, deltaX))
+    lastOffsetRef.current = nextOffset
+    setDragOffset(nextOffset)
   }
 
   function endSwipe() {
@@ -2745,8 +2830,9 @@ function SwipeableHistoryRow({ item, onDelete, onOpen }) {
       return
     }
 
-    setDeleteVisible(dragOffset < -48)
+    setDeleteVisible(lastOffsetRef.current < -48)
     setDragOffset(0)
+    lastOffsetRef.current = 0
     startXRef.current = null
   }
 
@@ -2764,9 +2850,13 @@ function SwipeableHistoryRow({ item, onDelete, onOpen }) {
     setDeleteVisible(false)
   }
 
+  const swipeItemClassName = deleteVisible || dragOffset < 0
+    ? 'history-swipe-item delete-peek'
+    : 'history-swipe-item'
+
   return (
     <li
-      className="history-swipe-item"
+      className={swipeItemClassName}
       data-testid={`history-row-${item.id}`}
       onMouseDown={(event) => beginSwipe(event.clientX)}
       onMouseMove={(event) => moveSwipe(event.clientX)}
@@ -2788,7 +2878,7 @@ function SwipeableHistoryRow({ item, onDelete, onOpen }) {
         삭제
       </button>
       <div
-        className="history-row-slide"
+        className={deleteVisible ? 'history-row-slide delete-visible' : 'history-row-slide'}
         style={{ transform: `translateX(${dragOffset || settledOffset}px)` }}
       >
         <ListRow
@@ -2796,7 +2886,7 @@ function SwipeableHistoryRow({ item, onDelete, onOpen }) {
           className="surface-row history-row"
           left={<span className="icon-bubble"><Icon>receipt_long</Icon></span>}
           contents={<TextStack description={formatWon(item.amount)} meta={new Date(item.completedAt).toLocaleDateString('ko-KR')} title={title} />}
-          right={<small>{item.participants.length}명 참여</small>}
+          right={<small className="history-row-participant-count">{item.participants.length}명 참여</small>}
           type="button"
           withArrow
           withTouchEffect
