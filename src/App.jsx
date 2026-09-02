@@ -15,7 +15,7 @@ import { createInitialGameSession, gameSessionReducer } from './games/core/sessi
 import { buildSettlementPreview as buildSettlementPreviewCore, calculateSettlementResult as calculateSettlementResultCore, formatWon, settlementModes } from './games/core/settlement'
 import { createEnvelopeAssignments, createRouletteGradient, getRouletteRotation } from './games/random/mechanics'
 import { blobToBase64, createSettlementImageBlob, deliverSettlementImage } from './results/share'
-import { buildSettlementDeepLink } from './results/share-link'
+import { buildSettlementDeepLink, parseSettlementShareSnapshot } from './results/share-link'
 import { createSettlementRepository } from './storage/settlement-storage'
 import {
   calculateFiveSecondResult,
@@ -126,6 +126,7 @@ async function getSettlementShareLink(payload) {
   return getTossShareLink(buildSettlementDeepLink({
     gameId: payload.gameId,
     mode: payload.mode,
+    shareSnapshot: payload,
     source: 'share',
   }))
 }
@@ -296,7 +297,21 @@ function getSettlementTargetScores(scores, settlementMode) {
   return selectSettlementTargetScores(scores, settlementMode)
 }
 
+function getSharedSettlementSnapshot(locationRef = globalThis.location) {
+  if (!locationRef?.href) {
+    return null
+  }
+
+  try {
+    const url = new URL(locationRef.href)
+    return parseSettlementShareSnapshot(url.searchParams.get('result'))
+  } catch {
+    return null
+  }
+}
+
 function App() {
+  const sharedSettlement = useMemo(() => getSharedSettlementSnapshot(), [])
   const settlementRepository = useMemo(() => createSettlementRepository(Storage), [])
   const interstitialAd = useMemo(() => createInterstitialAd({
     enabled: adsEnabled,
@@ -305,21 +320,23 @@ function App() {
     show: showFullScreenAd,
   }), [])
   const [activeTab, setActiveTab] = useState(tabs.home)
-  const [step, setStep] = useState(steps.start)
-  const [settlementTitle, setSettlementTitle] = useState('')
-  const [amount, setAmount] = useState(0)
-  const [participants, setParticipants] = useState(baseParticipants)
+  const [step, setStep] = useState(sharedSettlement ? steps.finalResult : steps.start)
+  const [settlementTitle, setSettlementTitle] = useState(sharedSettlement?.title || '')
+  const [amount, setAmount] = useState(sharedSettlement?.amount || 0)
+  const [participants, setParticipants] = useState(
+    sharedSettlement?.participants?.length ? sharedSettlement.participants : baseParticipants,
+  )
   const [newParticipant, setNewParticipant] = useState('')
   const [participantMessage, setParticipantMessage] = useState('')
-  const [settlementMode, setSettlementMode] = useState('exempt')
-  const [winner, setWinner] = useState(baseParticipants[baseParticipants.length - 1])
+  const [settlementMode, setSettlementMode] = useState(sharedSettlement?.mode || 'exempt')
+  const [winner, setWinner] = useState(sharedSettlement?.selectedParticipant || baseParticipants[baseParticipants.length - 1])
   const [shareOpen, setShareOpen] = useState(false)
   const [stepHistory, setStepHistory] = useState([])
   const [rouletteSpinning, setRouletteSpinning] = useState(false)
   const [rouletteDuration, setRouletteDuration] = useState(rouletteDurations.wheel)
   const [rouletteRotation, setRouletteRotation] = useState(0)
   const [randomError, setRandomError] = useState('')
-  const [selectedGameId, setSelectedGameId] = useState('roulette')
+  const [selectedGameId, setSelectedGameId] = useState(sharedSettlement?.gameId || 'roulette')
   const [gameSession, dispatchGameSession] = useReducer(gameSessionReducer, undefined, createInitialGameSession)
   const [allowReselect, setAllowReselect] = useState(false)
   const [leaveGameDialogOpen, setLeaveGameDialogOpen] = useState(false)
@@ -350,7 +367,7 @@ function App() {
   const analyticsOptOutRef = useRef(false)
   const analyticsInitializedRef = useRef(false)
   const analyticsLoadingRef = useRef(false)
-  const recordedCompletionRef = useRef(null)
+  const recordedCompletionRef = useRef(sharedSettlement ? 'shared-settlement' : null)
 
   const paidParticipants = useMemo(
     () => participants.filter((participant) => participant !== winner),
@@ -359,13 +376,13 @@ function App() {
   const effectiveAmount = amount || 84000
   const splitAmount = Math.ceil(effectiveAmount / Math.max(1, paidParticipants.length))
   const settlementResult = useMemo(
-    () => calculateSettlementResultCore({
+    () => sharedSettlement || calculateSettlementResultCore({
       amount: effectiveAmount,
       participants,
       selectedParticipant: winner,
       settlementMode,
     }),
-    [effectiveAmount, participants, settlementMode, winner],
+    [effectiveAmount, participants, settlementMode, sharedSettlement, winner],
   )
   const selectedGame = getGameById(selectedGameId)
   const currentPlayerIndex = gameSession.currentPlayerIndex
@@ -394,8 +411,10 @@ function App() {
   const isHomeStart = activeTab === tabs.home && step === steps.start
   const showHomeTopBar = activeTab === tabs.home && step !== steps.start && step !== steps.detail && !isFinalStep && !(isResultStep && !allowReselect)
 
-  const reportStorageError = useCallback((message = '기기 저장소에 변경 내용을 저장하지 못했어요') => {
-    setStorageError(message)
+  const reportStorageError = useCallback((message) => {
+    if (message) {
+      setStorageError(message)
+    }
   }, [])
 
   const initializeAnalytics = useCallback(async (anonymousId = anonymousIdRef.current) => {

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, test, vi } from 'vitest'
+import { afterEach, beforeEach, test, vi } from 'vitest'
 import { TDSMobileAITProvider } from '@toss/tds-mobile-ait'
 import App, { getTimingStopPosition, sanitizeFileName } from './App'
 import { storageKeys } from './storage/settlement-storage'
@@ -139,9 +139,14 @@ async function completeReactionTurn(participant, reactionMs) {
   fireEvent.click(screen.getByTestId('complete-game-turn'))
 }
 
+beforeEach(() => {
+  window.history.pushState(null, '', '/')
+})
+
 afterEach(() => {
   vi.useRealTimers()
   vi.clearAllMocks()
+  window.history.pushState(null, '', '/')
   bridgeMocks.Storage.getItem.mockResolvedValue(null)
   bridgeMocks.Storage.setItem.mockResolvedValue(undefined)
   bridgeMocks.Storage.removeItem.mockResolvedValue(undefined)
@@ -456,21 +461,8 @@ test('blocks deleting an existing record while history cannot be re-read', async
     }
     return null
   })
-  bridgeMocks.Storage.setItem.mockImplementation(async (key) => {
-    if (key === storageKeys.analyticsOptOut) {
-      throw new Error('write failed')
-    }
-  })
 
   renderApp()
-  fireEvent.click(screen.getByRole('button', { name: '설정' }))
-  fireEvent.click(
-    screen.getByRole('switch', { name: '익명 사용 통계 수집 안 함' }),
-  )
-  expect(
-    await screen.findByText('기기 저장소에 변경 내용을 저장하지 못했어요'),
-  ).toBeInTheDocument()
-
   historyReadFails = true
   fireEvent.click(screen.getByRole('button', { name: '정산 내역' }))
   fireEvent.click(screen.getByRole('button', { name: '다시 불러오기' }))
@@ -874,6 +866,27 @@ test('keeps start screen calm when draft cleanup cannot write to storage', async
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
+test('keeps setup calm when draft autosave cannot write to storage', async () => {
+  bridgeMocks.Storage.setItem.mockImplementation(async (key) => {
+    if (key === storageKeys.draft) {
+      throw new Error('bridge unavailable')
+    }
+  })
+
+  renderApp()
+
+  fireEvent.click(screen.getByRole('button', { name: /정산 시작하기/ }))
+
+  await waitFor(() => {
+    expect(bridgeMocks.Storage.setItem).toHaveBeenCalledWith(
+      storageKeys.draft,
+      expect.stringContaining('"step":"title"'),
+    )
+  })
+  expect(screen.queryByText('기기 저장소에 변경 내용을 저장하지 못했어요')).not.toBeInTheDocument()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
 test('lets users skip the optional settlement title', () => {
   renderApp()
 
@@ -1043,6 +1056,7 @@ async function openFinalShareSheet() {
   })
   vi.useRealTimers()
 
+  fireEvent.click(screen.getByRole('button', { name: /금액 확인하기/ }))
   fireEvent.click(screen.getByRole('button', { name: /결과 공유하기/ }))
 
   return screen.getByRole('dialog', { name: '정산 결과 공유' })
@@ -1065,9 +1079,17 @@ test('share sheet actions call Toss bridge APIs with settlement payloads', async
     })
   })
   const deepLink = bridgeMocks.getTossShareLink.mock.calls.at(-1)[0]
-  expect(deepLink).not.toContain(encodeURIComponent('강남역 삼겹살 모임'))
-  expect(deepLink).not.toContain(encodeURIComponent('민수'))
-  expect(deepLink).not.toContain('60000')
+  const sharedResult = JSON.parse(new URL(deepLink).searchParams.get('result'))
+  expect(sharedResult).toMatchObject({
+    amount: 60000,
+    gameId: 'roulette',
+    mode: 'exempt',
+    participants: ['민수', '지훈', '수진', '영희'],
+    title: '강남역 삼겹살 모임',
+  })
+  expect(sharedResult.lineItems).toEqual(expect.arrayContaining([
+    expect.objectContaining({ participant: '영희', highlighted: true }),
+  ]))
 
   fireEvent.click(within(dialog).getByRole('button', { name: /정산 요약 복사/ }))
   await waitFor(() => {
@@ -1114,6 +1136,35 @@ test('bottom navigation opens truthful history and settings screens', () => {
   fireEvent.click(screen.getByRole('button', { name: '설정' }))
   expect(screen.getByRole('heading', { name: '설정' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /게임소개/ })).toBeInTheDocument()
+})
+
+test('opens a settlement result directly from a shared Toss link snapshot', async () => {
+  const result = {
+    amount: 84000,
+    gameId: 'roulette',
+    lineItems: [
+      { participant: '민수', amount: 28000, amountText: '28,000원', description: '분담', highlighted: false },
+      { participant: '지훈', amount: 28000, amountText: '28,000원', description: '분담', highlighted: false },
+      { participant: '영희', amount: 0, amountText: '면제 (0원)', description: '면제', highlighted: true },
+    ],
+    mode: 'exempt',
+    modeLabel: '한 명 면제',
+    participants: ['민수', '지훈', '영희'],
+    selectedParticipant: '영희',
+    summaryText: '영희 님이 면제됐어요.',
+    title: '공유받은 정산',
+  }
+  const params = new URLSearchParams({ source: 'share', result: JSON.stringify(result) })
+  window.history.pushState(null, '', `/start?${params.toString()}`)
+
+  renderApp()
+
+  expect(screen.getByRole('heading', { name: '정산이 완료됐어요' })).toBeInTheDocument()
+  expect(screen.getByText('공유받은 정산')).toBeInTheDocument()
+  expect(screen.getByText('84,000원')).toBeInTheDocument()
+  expect(screen.getByText('영희')).toBeInTheDocument()
+  expect(screen.getByText('면제 (0원)')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /결과 공유하기/ })).toBeInTheDocument()
 })
 
 test('history screen uses an opaque app surface behind saved settlement rows', () => {

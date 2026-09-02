@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  body {
+    width: 636px;
+    height: 1048px;
+    overflow: hidden;
+    font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    background: radial-gradient(circle at 16% 22%, rgba(255,255,255,.82) 0 13%, transparent 14%),radial-gradient(circle at 84% 77%, rgba(255,255,255,.22) 0 15%, transparent 16%),linear-gradient(165deg, #f7faff 0%, #dceaff 44%, #2f80ed 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    color: #142033;
+  }
+  .brand {
+    margin-top: 32px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    color: #1f7aff;
+    font-size: 18px;
+    font-weight: 800;
+  }
+  .mark {
+    width: 25px;
+    height: 25px;
+    border-radius: 7px;
+    background: linear-gradient(145deg, #2f80ed, #6eb6ff);
+    box-shadow: 0 9px 22px rgba(47,128,237,.28);
+    position: relative;
+  }
+  .mark::after {
+    content: "";
+    position: absolute;
+    width: 42%;
+    height: 42%;
+    left: 29%;
+    top: 29%;
+    border-radius: 50%;
+    background: #fff;
+  }
+  .copy {
+    margin-top: 31px;
+    text-align: center;
+    padding: 0 40px;
+  }
+  h1 {
+    font-size: 49px;
+    line-height: 1.13;
+    font-weight: 900;
+    letter-spacing: 0;
+    color: #126dff;
+    word-break: keep-all;
+  }
+  p {
+    margin-top: 14px;
+    font-size: 22px;
+    line-height: 1.35;
+    font-weight: 700;
+    color: rgba(20,32,51,.72);
+    word-break: keep-all;
+  }
+  .device {
+    margin-top: 41px;
+    width: 337px;
+    aspect-ratio: 1320 / 2868;
+    background: #101014;
+    border-radius: 49px;
+    padding: 8px;
+    box-shadow: 0 90px 180px rgba(20, 74, 142, .38), inset 0 0 0 5px #3b3d45;
+    position: relative;
+    transform: rotate(2deg);
+  }
+  .screen {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top;
+    border-radius: 40px;
+    display: block;
+  }
+  .island {
+    position: absolute;
+    top: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 90px;
+    height: 26px;
+    border-radius: 999px;
+    background: #050507;
+  }
+  .hole {
+    position: absolute;
+    top: 13px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #050507;
+  }
+</style>
+</head>
+<body>
+  <div class="brand"><span class="mark"></span><span>누가낼래</span></div>
+  <section class="copy">
+    <h1>참여자를 쉽게 추가</h1>
+    <p>최대 8명까지 함께</p>
+  </section>
+  <div class="device">
+    <img class="screen" src="file:///C:/Users/audxo/nuganellae/screenshots/screenshots_4.png" alt="">
+    <div class="island"></div>
+  </div>
+</body>
+</html>
