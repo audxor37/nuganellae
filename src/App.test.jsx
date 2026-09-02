@@ -1890,6 +1890,28 @@ test('disabled result reselection hides result back navigation and retry actions
   expect(screen.getByRole('button', { name: /금액 확인하기/ })).toBeInTheDocument()
 })
 
+test('roulette result shows the title first and centers the amount confirmation action', async () => {
+  vi.useFakeTimers()
+  const { container } = renderApp()
+
+  startSettlement()
+  enterAmountWithQuickButton()
+  fireEvent.click(screen.getByTestId('participants-next'))
+  fireEvent.click(screen.getByTestId('method-extra'))
+  fireEvent.click(screen.getByTestId('method-next'))
+  fireEvent.click(screen.getByTestId('game-select-next'))
+  fireEvent.click(screen.getByRole('button', { name: /룰렛 돌리기/ }))
+
+  await act(async () => {
+    vi.advanceTimersByTime(2800)
+  })
+  vi.useRealTimers()
+
+  expect(container.querySelector('.winner-illustration')).not.toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: /님이 선택됐어요/ })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /금액 확인하기/ }).closest('.roulette-result-actions')).toBeInTheDocument()
+})
+
 test('leaving an in-progress ranking game uses a TDS confirmation dialog before resetting to game select', () => {
   vi.useFakeTimers()
   const confirmSpy = vi.spyOn(window, 'confirm')

@@ -2615,40 +2615,12 @@ function getTimingGradeLabel(grade) {
 }
 
 function RouletteResultScreen({ amount, canRetry, settlementMode, settlementResult, winner, onRetry, onNext }) {
-  const modeLabel = getSettlementModeLabel(settlementMode)
   const isExemptMode = settlementMode === 'exempt'
   const selectedLine = settlementResult.lineItems.find((item) => item.participant === winner)
   const otherLine = settlementResult.lineItems.find((item) => item.participant !== winner)
 
   return (
     <section className="screen roulette-result-screen" aria-labelledby="roulette-result-title" aria-live="polite">
-      <div className="winner-illustration">
-        <div className="winner-artwork" role="img" aria-label={`${winner} 님 면제 확정 이미지`}>
-          <img alt="" aria-hidden="true" src={settlementCompleteImage} />
-        </div>
-        <div className="confetti-rain" data-testid="confetti-rain" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-          <i />
-          <i />
-          <i />
-          <i />
-          <i />
-          <i />
-          <i />
-        </div>
-        <div className="roulette-result-card">
-          <small>룰렛 결과 확인</small>
-          <div className="mini-result-roulette" aria-hidden="true">
-            <span>{winner.slice(0, 1)}</span>
-          </div>
-          <strong>{winner} 님 {isExemptMode ? '면제' : getSettlementOutcomeLabel(settlementMode)}</strong>
-          <p>{isExemptMode ? `나머지 인원 각 ${otherLine?.amountText}` : selectedLine?.amountText}</p>
-          <em>총 {formatWon(amount)}</em>
-          <span className="result-kicker"><Icon>auto_awesome</Icon> {isExemptMode ? '면제 확정' : `${modeLabel} 적용`}</span>
-        </div>
-      </div>
       <TdsTitle centered id="roulette-result-title" subtitle={settlementResult.summaryText} title={isExemptMode ? `${winner} 님이 면제됐어요` : `${winner} 님이 선택됐어요`} />
       <div className="result-stats">
         <div><small>결제 총액</small><strong>{formatWon(amount)}</strong><Icon>receipt_long</Icon></div>
@@ -2656,7 +2628,7 @@ function RouletteResultScreen({ amount, canRetry, settlementMode, settlementResu
         <div><small>{selectedLine?.description}</small><strong>{selectedLine?.amountText}</strong></div>
         {otherLine && <div><small>나머지 기준 금액</small><strong>{otherLine.amountText}</strong></div>}
       </div>
-      <div className="button-row">
+      <div className={canRetry ? 'button-row roulette-result-actions has-retry' : 'button-row roulette-result-actions'}>
         {canRetry && <Button color="primary" display="full" size="large" type="button" variant="weak" onClick={onRetry}><Icon>refresh</Icon> 다시 뽑기</Button>}
         <Button color="primary" display="full" size="large" type="button" onClick={onNext}>금액 확인하기</Button>
       </div>
@@ -2795,7 +2767,7 @@ function HistoryScreen({ items, loading, onClearAll, onDeleteItem, onOpenDetail 
         </ul>
         {loading && <div className="state-grid" role="status"><span>정산 내역을 불러오는 중이에요</span></div>}
         {!loading && items.length === 0 && <div className="state-grid"><span>아직 정산 내역이 없어요</span></div>}
-        {items.length >= 2 && <HistoryBanner />}
+        {items.length >= 2 && <AdBanner className="history-ad-banner" />}
       </section>
       <ConfirmDialog
         closeOnBackEvent
@@ -2916,7 +2888,7 @@ function SwipeableHistoryRow({ item, onDelete, onOpen }) {
   )
 }
 
-function HistoryBanner() {
+function AdBanner({ className }) {
   const targetRef = useRef(null)
 
   useEffect(() => attachHistoryBanner({
@@ -2926,7 +2898,7 @@ function HistoryBanner() {
     target: targetRef.current,
   }), [])
 
-  return <aside ref={targetRef} aria-label="광고" className="history-ad-banner" />
+  return <aside ref={targetRef} aria-label="광고" className={className} />
 }
 
 function DetailScreen({ record, onBack, onDelete, onShare }) {
@@ -2953,6 +2925,7 @@ function DetailScreen({ record, onBack, onDelete, onShare }) {
         </ul>
         <blockquote>{record.summaryText}</blockquote>
         <Button color="danger" display="full" size="large" type="button" onClick={() => setDeleteDialogOpen(true)}><Icon>delete</Icon> 정산 내역 삭제</Button>
+        <AdBanner className="detail-ad-banner" />
         <ScreenCTA icon="share" onClick={onShare}>결과 다시 공유하기</ScreenCTA>
       </section>
       <ConfirmDialog

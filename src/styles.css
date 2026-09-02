@@ -816,7 +816,8 @@ small {
   grid-column: 1 / -1;
 }
 
-.history-ad-banner {
+.history-ad-banner,
+.detail-ad-banner {
   width: 100%;
   min-height: 96px;
   margin-top: 16px;
@@ -1401,6 +1402,15 @@ small {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+
+.roulette-result-actions {
+  grid-template-columns: minmax(0, 320px);
+  justify-content: center;
+}
+
+.roulette-result-actions.has-retry {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .compact-summary {
