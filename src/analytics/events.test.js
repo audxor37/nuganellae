@@ -21,3 +21,8 @@ test('analytics removes names, exact amounts, titles, and share content', () => 
     amount_bucket: '50000-99999',
   })
 })
+
+test('retains bounded revenue and reuse dimensions without group identity', () => {
+  const dimensions = { placement: 'own_result', policy_version: 'v2', skip_reason: 'not_ready', is_repeat: true, setup_duration_bucket: '0-10s' }
+  expect(sanitizeAnalyticsProperties({ ...dimensions, group_key: 'private', share_url: 'private' })).toEqual(dimensions)
+})

@@ -817,10 +817,12 @@ small {
 }
 
 .history-ad-banner,
-.detail-ad-banner {
+.detail-ad-banner,
+.result-ad-banner {
   width: 100%;
   min-height: 96px;
   margin-top: 16px;
+  margin-bottom: 16px;
   overflow: hidden;
   border-radius: 16px;
 }
@@ -837,6 +839,17 @@ small {
   padding: 12px 14px;
   font-size: 13px;
 }
+
+.history-ad-row { list-style: none; }
+.result-brand { color: #3182f6; }
+.recent-groups, .reuse-summary { display: grid; gap: 12px; width: 100%; }
+.recent-groups h2, .reuse-summary h2 { font-size: 18px; margin: 8px 0; }
+.recent-group-copy { display: grid; gap: 6px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.recent-group-copy small, .empty-recent { color: #6b7684; font-size: 14px; }
+.reuse-summary { margin-top: 20px; padding: 16px; box-sizing: border-box; border-radius: 16px; background: #f2f4f6; }
+.reuse-summary > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.reuse-summary > div > span { min-width: 0; overflow-wrap: anywhere; }
+.reuse-summary > div > button { flex-shrink: 0; }
 
 .storage-error-notice > span {
   flex: 1;

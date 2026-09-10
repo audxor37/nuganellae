@@ -1,8 +1,8 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react'
-import { getTossShareLink, loadFullScreenAd, saveBase64Data, setClipboardText, share, showFullScreenAd, Storage, TossAds } from '@apps-in-toss/web-framework'
-import { useCallback } from 'react'
+import { getTossShareLink, graniteEvent, loadFullScreenAd, saveBase64Data, setClipboardText, share, showFullScreenAd, Storage, TossAds } from '@apps-in-toss/web-framework'
+import { Fragment, useCallback } from 'react'
 import { useReducer } from 'react'
-import { BottomCTA, BottomSheet, Button, ConfirmDialog, IconButton, ListHeader, ListRow, Switch, Tab, TextField, Top, useWebToast } from '@toss/tds-mobile'
+import { BottomCTA, BottomSheet, Button, ConfirmDialog, ListHeader, ListRow, Switch, Tab, TextField, Top, useWebToast } from '@toss/tds-mobile'
 import settlementCompleteImage from './assets/settlement-complete.jpg'
 import { getNextAdFrequencyState, shouldShowInterstitial } from './ads/ad-policy'
 import { attachHistoryBanner, createInterstitialAd } from './ads/apps-in-toss-ads'
@@ -16,7 +16,7 @@ import { buildSettlementPreview as buildSettlementPreviewCore, calculateSettleme
 import { createEnvelopeAssignments, createRouletteGradient, getRouletteRotation } from './games/random/mechanics'
 import { blobToBase64, createSettlementImageBlob, deliverSettlementImage } from './results/share'
 import { buildSettlementDeepLink, parseSettlementShareSnapshot } from './results/share-link'
-import { createSettlementRepository } from './storage/settlement-storage'
+import { createSettlementRepository, deriveRecentGroups, normalizeReusableSetup } from './storage/settlement-storage'
 import {
   calculateFiveSecondResult,
   calculateTimingResult,
@@ -66,7 +66,7 @@ const steps = {
   detail: 'detail',
 }
 
-const baseParticipants = ['민수', '지훈', '수진', '영희']
+const baseParticipants = []
 const defaultAppSettings = {
   version: 1,
   defaultSettlementMode: 'exempt',
@@ -80,8 +80,10 @@ const maxParticipants = 8
 
 const amountKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', 'backspace']
 const adsEnabled = import.meta.env.VITE_ENABLE_ADS === 'true'
-const bannerAdGroupId = import.meta.env.VITE_AIT_BANNER_AD_GROUP_ID
-const interstitialAdGroupId = import.meta.env.VITE_AIT_INTERSTITIAL_AD_GROUP_ID
+const resultBannerEnabled = import.meta.env.VITE_ENABLE_RESULT_BANNER !== 'false'
+const interstitialEnabled = import.meta.env.VITE_ENABLE_INTERSTITIAL !== 'false'
+const bannerAdGroupId = import.meta.env.DEV ? 'ait-ad-test-banner-id' : import.meta.env.VITE_AIT_BANNER_AD_GROUP_ID
+const interstitialAdGroupId = import.meta.env.DEV ? 'ait-ad-test-interstitial-id' : import.meta.env.VITE_AIT_INTERSTITIAL_AD_GROUP_ID
 const amplitudeApiKey = import.meta.env.VITE_AMPLITUDE_API_KEY
 const materialSymbolsFontCheck = '24px "Material Symbols Outlined"'
 let materialSymbolsReadyPromise
@@ -96,7 +98,7 @@ export function sanitizeFileName(title) {
   return cleanedTitle ? `${cleanedTitle}.png` : 'nuganellae-settlement-result.png'
 }
 
-function buildSharePayload({ amount, gameId, participants, settlementMode, settlementResult, settlementTitle }) {
+function buildSharePayload({ amount, gameId, participants, settlementMode, settlementResult, settlementTitle, allowReselect = false }) {
   const title = settlementTitle.trim()
   const result = settlementResult || calculateSettlementResultCore({ amount, participants, settlementMode: 'exempt', selectedParticipant: participants[0] })
   const memberLines = result.lineItems.map((item) => `${item.participant}: ${item.amountText}`)
@@ -104,6 +106,7 @@ function buildSharePayload({ amount, gameId, participants, settlementMode, settl
   return {
     amount,
     fileName: sanitizeFileName(title),
+    allowReselect,
     gameId,
     lineItems: result.lineItems,
     memberLines,
@@ -111,8 +114,10 @@ function buildSharePayload({ amount, gameId, participants, settlementMode, settl
     modeLabel: result.modeLabel,
     participants,
     selectedParticipant: result.selectedParticipant,
+    summaryText: result.summaryText,
     title,
     message: [
+      '누가낼래 · 정산 결과',
       title,
       `총 정산 금액: ${formatWon(amount)}`,
       `정산 방식: ${result.modeLabel}`,
@@ -133,14 +138,17 @@ async function getSettlementShareLink(payload) {
 
 async function copySettlementLink(payload) {
   const tossLink = await getSettlementShareLink(payload)
-
-  try {
-    await setClipboardText(tossLink)
-  } catch {
-    await navigator.clipboard?.writeText(tossLink)
-  }
-
+  await copyText(tossLink)
   return tossLink
+}
+
+async function copyText(value) {
+  try {
+    await setClipboardText(value)
+  } catch (error) {
+    if (!globalThis.navigator?.clipboard?.writeText) throw error
+    await navigator.clipboard.writeText(value)
+  }
 }
 
 async function saveSettlementImage(payload) {
@@ -310,14 +318,23 @@ function getSharedSettlementSnapshot(locationRef = globalThis.location) {
   }
 }
 
+function isTossNativeBridgeAvailable() {
+  const nativeWindow = typeof window === 'undefined' ? null : window
+
+  return typeof nativeWindow?.ReactNativeWebView?.postMessage === 'function'
+    && typeof nativeWindow?.__GRANITE_NATIVE_EMITTER?.on === 'function'
+}
+
 function App() {
-  const sharedSettlement = useMemo(() => getSharedSettlementSnapshot(), [])
+  const [sharedSettlement, setSharedSettlement] = useState(() => getSharedSettlementSnapshot())
+  const entrySourceRef = useRef(new URLSearchParams(globalThis.location?.search || '').get('source') === 'share' ? 'share' : 'direct')
   const settlementRepository = useMemo(() => createSettlementRepository(Storage), [])
   const interstitialAd = useMemo(() => createInterstitialAd({
-    enabled: adsEnabled,
+    enabled: adsEnabled && interstitialEnabled,
     groupId: interstitialAdGroupId,
     load: loadFullScreenAd,
     show: showFullScreenAd,
+    onEvent: (event) => trackAdEvent(event, 'interstitial', 'result_restart'),
   }), [])
   const [activeTab, setActiveTab] = useState(tabs.home)
   const [step, setStep] = useState(sharedSettlement ? steps.finalResult : steps.start)
@@ -329,7 +346,7 @@ function App() {
   const [newParticipant, setNewParticipant] = useState('')
   const [participantMessage, setParticipantMessage] = useState('')
   const [settlementMode, setSettlementMode] = useState(sharedSettlement?.mode || 'exempt')
-  const [winner, setWinner] = useState(sharedSettlement?.selectedParticipant || baseParticipants[baseParticipants.length - 1])
+  const [winner, setWinner] = useState(sharedSettlement?.selectedParticipant || '')
   const [shareOpen, setShareOpen] = useState(false)
   const [stepHistory, setStepHistory] = useState([])
   const [rouletteSpinning, setRouletteSpinning] = useState(false)
@@ -338,7 +355,16 @@ function App() {
   const [randomError, setRandomError] = useState('')
   const [selectedGameId, setSelectedGameId] = useState(sharedSettlement?.gameId || 'roulette')
   const [gameSession, dispatchGameSession] = useReducer(gameSessionReducer, undefined, createInitialGameSession)
-  const [allowReselect, setAllowReselect] = useState(false)
+  const [allowReselect, setAllowReselect] = useState(sharedSettlement?.allowReselect || false)
+  const [quickSetup, setQuickSetup] = useState(false)
+  const [setupEdit, setSetupEdit] = useState(null)
+  const [restartPending, setRestartPending] = useState(false)
+  const restartPendingRef = useRef(false)
+  const mountedRef = useRef(true)
+  const adAttemptedResultsRef = useRef(new Set())
+  const settlementSourceRef = useRef('home')
+  const setupStartedAtRef = useRef(null)
+  const setupDurationRef = useRef(null)
   const [leaveGameDialogOpen, setLeaveGameDialogOpen] = useState(false)
   const [discardResultDialogOpen, setDiscardResultDialogOpen] = useState(false)
   const [restartTargetStep, setRestartTargetStep] = useState(null)
@@ -353,15 +379,22 @@ function App() {
   const [adFrequency, setAdFrequency] = useState({
     completedCount: 0,
     lastInterstitialAt: null,
+    lastInterstitialCompletedCount: 0,
   })
   const [analyticsOptOut, setAnalyticsOptOut] = useState(false)
   const adFrequencyRef = useRef(adFrequency)
   const settlementsReadableRef = useRef(false)
   const pendingSettlementsRef = useRef([])
+  const pendingAnalyticsRef = useRef([])
   const analyticsRef = useRef({
     initialize: () => false,
     setEnabled: () => {},
-    track: () => false,
+    track: (event, properties) => {
+      if (!amplitudeApiKey || analyticsOptOutRef.current) return false
+      pendingAnalyticsRef.current.push([event, properties])
+      if (pendingAnalyticsRef.current.length > 100) pendingAnalyticsRef.current.shift()
+      return false
+    },
   })
   const anonymousIdRef = useRef(null)
   const analyticsOptOutRef = useRef(false)
@@ -369,12 +402,10 @@ function App() {
   const analyticsLoadingRef = useRef(false)
   const recordedCompletionRef = useRef(sharedSettlement ? 'shared-settlement' : null)
 
-  const paidParticipants = useMemo(
-    () => participants.filter((participant) => participant !== winner),
-    [participants, winner],
-  )
-  const effectiveAmount = amount || 84000
-  const splitAmount = Math.ceil(effectiveAmount / Math.max(1, paidParticipants.length))
+  const effectiveAmount = amount
+  const validSetup = Number.isSafeInteger(amount) && amount > 0 && Boolean(normalizeReusableSetup({ participants }))
+  const recentGroups = useMemo(() => deriveRecentGroups(savedSettlements).slice(0, 3), [savedSettlements])
+  const splitAmount = Math.ceil(effectiveAmount / Math.max(1, participants.length - 1))
   const settlementResult = useMemo(
     () => sharedSettlement || calculateSettlementResultCore({
       amount: effectiveAmount,
@@ -412,10 +443,24 @@ function App() {
   const showHomeTopBar = activeTab === tabs.home && step !== steps.start && step !== steps.detail && !isFinalStep && !(isResultStep && !allowReselect)
 
   const reportStorageError = useCallback((message) => {
-    if (message) {
-      setStorageError(message)
-    }
+    setStorageError(message || '정산 데이터를 저장하지 못했어요')
   }, [])
+
+  function trackAdEvent(event, adType, placement) {
+    analyticsRef.current.track(`ad_${event.type}`, {
+      ad_type: adType, placement, policy_version: 'reuse-v2',
+      stage: event.stage,
+      ...(event.type === 'skipped' ? { skip_reason: event.reason } : { failure_reason: event.reason }),
+    })
+  }
+  const trackBannerEvent = useCallback((event, placement) => trackAdEvent(event, 'banner', placement), [])
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      interstitialAd.dispose()
+    }
+  }, [interstitialAd])
 
   const initializeAnalytics = useCallback(async (anonymousId = anonymousIdRef.current) => {
     if (!amplitudeApiKey || !anonymousId) {
@@ -436,6 +481,7 @@ function App() {
       const client = await initializeAnalyticsClient({
         apiKey: amplitudeApiKey,
         deviceId: anonymousId,
+        source: entrySourceRef.current,
         isOptedOut: () => analyticsOptOutRef.current,
         loadSdk: () => import('@amplitude/analytics-browser'),
       })
@@ -445,6 +491,9 @@ function App() {
 
       analyticsRef.current = client
       analyticsInitializedRef.current = true
+      for (const [event, properties] of pendingAnalyticsRef.current.splice(0)) {
+        client.track(event, properties)
+      }
       return true
     } catch {
       return false
@@ -480,6 +529,7 @@ function App() {
         const storedAdFrequency = valueAt(2, {
           completedCount: 0,
           lastInterstitialAt: null,
+          lastInterstitialCompletedCount: 0,
         })
         const storedAnalyticsOptOut = valueAt(3, true)
         const storedAnonymousId = valueAt(4, null)
@@ -496,6 +546,8 @@ function App() {
         adFrequencyRef.current = storedAdFrequency
         setAnalyticsOptOut(Boolean(storedAnalyticsOptOut))
         analyticsOptOutRef.current = Boolean(storedAnalyticsOptOut)
+        analyticsRef.current.setEnabled(!storedAnalyticsOptOut)
+        if (storedAnalyticsOptOut) pendingAnalyticsRef.current = []
         setAppSettings(storedAppSettings)
         settlementsReadableRef.current = settlementsReadSucceeded
         if (settlementsReadSucceeded) {
@@ -567,6 +619,7 @@ function App() {
       participants,
       settlementMode,
       selectedGameId,
+      allowReselect,
       updatedAt: new Date().toISOString(),
     }
 
@@ -581,13 +634,14 @@ function App() {
     settlementMode,
     settlementRepository,
     settlementTitle,
+    allowReselect,
     step,
     storageHydrated,
     reportStorageError,
   ])
 
   useEffect(() => {
-    if (!storageHydrated || !isFinalStep || recordedCompletionRef.current) {
+    if (!storageHydrated || activeTab !== tabs.home || !isFinalStep || sharedSettlement || !validSetup || recordedCompletionRef.current) {
       return
     }
 
@@ -599,6 +653,7 @@ function App() {
       amount: effectiveAmount,
       participants: [...participants],
       mode: settlementMode,
+      allowReselect: settlementMode === 'exempt' && allowReselect,
       modeLabel: settlementResult.modeLabel,
       gameId: step === steps.gameFinalResult ? selectedGameId : null,
       selectedParticipant: settlementResult.selectedParticipant,
@@ -647,6 +702,9 @@ function App() {
       void interstitialAd.preload()
     }
     analyticsRef.current.track('settlement_completed', {
+      source: settlementSourceRef.current,
+      is_repeat: adFrequencyRef.current.completedCount > 1,
+      setup_duration_bucket: setupDurationRef.current || 'unknown',
       amount_bucket: getAmountBucket(effectiveAmount),
       game_id: record.gameId || undefined,
       mode: settlementMode,
@@ -655,6 +713,10 @@ function App() {
     })
     void settlementRepository.removeDraft().catch(() => reportStorageError())
   }, [
+    activeTab,
+    sharedSettlement,
+    validSetup,
+    allowReselect,
     effectiveAmount,
     isFinalStep,
     participants,
@@ -709,7 +771,7 @@ function App() {
   }
 
   function addAmount(value) {
-    setAmount((current) => current + value)
+    setAmount((current) => Number.isSafeInteger(current + value) ? current + value : current)
   }
 
   function inputAmountKey(key) {
@@ -721,10 +783,18 @@ function App() {
       return
     }
 
-    setAmount((current) => Number(`${current === 0 ? '' : current}${key}`))
+    setAmount((current) => {
+      const next = Number(`${current === 0 ? '' : current}${key}`)
+      return Number.isSafeInteger(next) ? next : current
+    })
   }
 
   function goPreviousHomeStep() {
+    if (restartPendingRef.current) return
+    if (setupEdit) {
+      finishSetupEdit(false)
+      return
+    }
     if (isGameInProgressStep) {
       setLeaveGameDialogOpen(true)
       return
@@ -761,6 +831,7 @@ function App() {
   }
 
   function navigateTab(tab) {
+    if (restartPendingRef.current) return
     if (tab === activeTab) {
       return
     }
@@ -844,20 +915,19 @@ function App() {
   }
 
   function removeParticipant(name) {
-    if (participants.length <= 2) {
-      return
-    }
-
     const nextParticipants = participants.filter((participant) => participant !== name)
     setParticipants(nextParticipants)
     if (winner === name) {
-      setWinner(nextParticipants[nextParticipants.length - 1])
+      setWinner(nextParticipants[nextParticipants.length - 1] || '')
     }
   }
 
   function chooseMethod(mode) {
+    if (!validSetup) return
     setSettlementMode(mode)
+    if (mode !== 'exempt') setAllowReselect(false)
     if (mode === 'equal') {
+      recordSetupDuration()
       navigateHomeStep(steps.finalResult, { resetHistory: true })
       return
     }
@@ -898,6 +968,10 @@ function App() {
   }
 
   function resetSettlementDraft(settings = appSettings) {
+    setSharedSettlement(null)
+    setSelectedSettlement(null)
+    setQuickSetup(false)
+    setSetupEdit(null)
     recordedCompletionRef.current = null
     setSettlementTitle('')
     setAmount(0)
@@ -905,7 +979,7 @@ function App() {
     setParticipantMessage('')
     setParticipants([...baseParticipants])
     setSettlementMode(settings.defaultSettlementMode)
-    setWinner(baseParticipants[baseParticipants.length - 1])
+    setWinner('')
     setAllowReselect(settings.defaultAllowReselect)
     setSelectedGameId(settings.defaultGameId)
     setRouletteSpinning(false)
@@ -916,40 +990,100 @@ function App() {
     resetGameProgress()
   }
 
-  async function restartSettlement() {
-    if (shouldShowInterstitial(adFrequencyRef.current)) {
-      const result = await interstitialAd.show()
-      if (result === 'dismissed') {
-        const nextAdFrequency = getNextAdFrequencyState(adFrequencyRef.current, {
-          type: 'INTERSTITIAL_SHOWN',
-          now: new Date().toISOString(),
-        })
-        adFrequencyRef.current = nextAdFrequency
-        setAdFrequency(nextAdFrequency)
-        void settlementRepository
-          .saveAdFrequency(nextAdFrequency)
-          .catch(() => reportStorageError())
-      }
+  function startSettlementWithSetup(record = null, source = 'home') {
+    const setup = record ? normalizeReusableSetup(record) : null
+    if (record && !setup) {
+      reportStorageError('이 모임의 참여자를 다시 입력해 주세요')
+      return
     }
-
     resetSettlementDraft(appSettings)
+    if (setup) {
+      setParticipants(setup.participants)
+      setSettlementMode(setup.settlementMode)
+      setSelectedGameId(setup.selectedGameId)
+      setAllowReselect(setup.allowReselect)
+      setQuickSetup(true)
+    }
+    settlementSourceRef.current = source
+    setupStartedAtRef.current = Date.now()
+    setupDurationRef.current = null
     setSavedDraft(null)
     void settlementRepository.removeDraft().catch(() => reportStorageError())
-    navigateHomeStep(steps.title, { resetHistory: true })
+    analyticsRef.current.track('settlement_started', { source, stage: 'setup', is_repeat: adFrequencyRef.current.completedCount > 0 })
+    navigateHomeStep(steps.amount, { resetHistory: true })
   }
 
   function startNewSettlement() {
-    resetSettlementDraft(appSettings)
-    setSavedDraft(null)
-    void settlementRepository.removeDraft().catch(() => undefined)
-    analyticsRef.current.track('settlement_started', { source: 'home', stage: 'setup' })
-    navigateHomeStep(steps.title, { resetHistory: true })
+    startSettlementWithSetup()
+  }
+
+  async function restartSettlement(reuse = false) {
+    if (restartPendingRef.current || !storageHydrated) return
+    restartPendingRef.current = true
+    setRestartPending(true)
+    const record = reuse ? { participants: [...participants], mode: settlementMode, gameId: selectedGameId, allowReselect } : null
+    const source = sharedSettlement ? 'shared_result' : 'own_result'
+    const completionId = recordedCompletionRef.current
+    try {
+      if (!sharedSettlement && completionId && !adAttemptedResultsRef.current.has(completionId)) {
+        adAttemptedResultsRef.current.add(completionId)
+        if (shouldShowInterstitial(adFrequencyRef.current)) {
+          await interstitialAd.show({ onEvent: (event) => {
+            if (event.type !== 'show') return
+            const next = getNextAdFrequencyState(adFrequencyRef.current, {
+              type: 'INTERSTITIAL_SHOWN', now: new Date().toISOString(),
+              completedCount: adFrequencyRef.current.completedCount,
+            })
+            adFrequencyRef.current = next
+            setAdFrequency(next)
+            void settlementRepository.saveAdFrequency(next).catch(() => reportStorageError())
+          } })
+        } else {
+          trackAdEvent({ type: 'skipped', reason: 'frequency_limit' }, 'interstitial', 'result_restart')
+        }
+      }
+      if (mountedRef.current) startSettlementWithSetup(record, source)
+    } finally {
+      restartPendingRef.current = false
+      if (mountedRef.current) setRestartPending(false)
+    }
+  }
+
+  function editSetup(target) {
+    setSetupEdit({ participants: [...participants], settlementMode, selectedGameId, allowReselect })
+    navigateHomeStep(target)
+  }
+
+  function finishSetupEdit(save) {
+    if (!save && setupEdit) {
+      setParticipants(setupEdit.participants)
+      setSettlementMode(setupEdit.settlementMode)
+      setSelectedGameId(setupEdit.selectedGameId)
+      setAllowReselect(setupEdit.allowReselect)
+    }
+    if (save && settlementMode !== 'exempt') setAllowReselect(false)
+    setSetupEdit(null)
+    navigateHomeStep(steps.amount, { resetHistory: true })
+  }
+
+  function recordSetupDuration() {
+    if (setupDurationRef.current || setupStartedAtRef.current == null) return
+    const seconds = (Date.now() - setupStartedAtRef.current) / 1000
+    setupDurationRef.current = seconds < 15 ? 'under_15s' : seconds < 30 ? '15_29s' : seconds < 60 ? '30_59s' : '60s_plus'
+  }
+
+  function startQuickSetup() {
+    if (!validSetup) return
+    recordSetupDuration()
+    if (settlementMode === 'equal') navigateHomeStep(steps.finalResult, { resetHistory: true })
+    else startSelectedGame()
   }
 
   function updateAnalyticsOptOut(nextValue) {
     const optOut = Boolean(nextValue)
     setAnalyticsOptOut(optOut)
     analyticsOptOutRef.current = optOut
+    if (optOut) pendingAnalyticsRef.current = []
     analyticsRef.current.setEnabled(!optOut)
     if (!optOut) {
       void initializeAnalytics()
@@ -1023,6 +1157,7 @@ function App() {
       const resetAdFrequency = {
         completedCount: 0,
         lastInterstitialAt: null,
+        lastInterstitialCompletedCount: 0,
       }
       adFrequencyRef.current = resetAdFrequency
       setAdFrequency(resetAdFrequency)
@@ -1097,6 +1232,8 @@ function App() {
   }
 
   function startSelectedGame() {
+    if (!validSetup) return
+    recordSetupDuration()
     resetGameProgress()
     if (selectedGame.category === 'random') {
       if (selectedGame.id === 'roulette') {
@@ -1187,6 +1324,56 @@ function App() {
     navigateHomeStep(steps.gameFinalResult, { resetHistory: true })
   }
 
+  const handlesNativeBack = shareOpen
+    || leaveGameDialogOpen
+    || discardResultDialogOpen
+    || pendingResetTab != null
+    || showHomeTopBar
+    || (activeTab === tabs.history && step === steps.detail)
+
+  useEffect(() => {
+    if (!handlesNativeBack
+      || !isTossNativeBridgeAvailable()
+      || typeof graniteEvent?.addEventListener !== 'function') {
+      return undefined
+    }
+
+    return graniteEvent.addEventListener('backEvent', {
+      onEvent: () => {
+        if (shareOpen) {
+          setShareOpen(false)
+          return
+        }
+        if (leaveGameDialogOpen) {
+          closeLeaveGameDialog()
+          return
+        }
+        if (discardResultDialogOpen) {
+          closeDiscardResultDialog()
+          return
+        }
+        if (pendingResetTab != null) {
+          closeGameFlowResetDialog()
+          return
+        }
+        if (activeTab === tabs.history && step === steps.detail) {
+          closeSettlementDetail()
+          return
+        }
+        goPreviousHomeStep()
+      },
+      onError: () => undefined,
+    })
+  }, [
+    activeTab,
+    discardResultDialogOpen,
+    handlesNativeBack,
+    leaveGameDialogOpen,
+    pendingResetTab,
+    shareOpen,
+    step,
+  ])
+
   return (
     <main className="app">
       <section className="phone-shell" aria-label="누가낼래 앱">
@@ -1194,14 +1381,13 @@ function App() {
           <TopBar
             title="누가낼래"
             progress={[steps.start, steps.title, steps.amount, steps.participants].includes(step) ? '1/3' : [steps.method, steps.exempt, steps.gameSelect].includes(step) ? '2/3' : '3/3'}
-            onBack={goPreviousHomeStep}
           />
         )}
 
-        {storageError && !isHomeStart && (
+        {storageError && (
           <aside className="storage-error-notice" role="alert">
             <span>{storageError}</span>
-            {activeTab === tabs.history && (
+            {(activeTab === tabs.history || isHomeStart) && (
               <Button
                 color="primary"
                 size="small"
@@ -1222,14 +1408,16 @@ function App() {
             onClearAll={clearSettlementHistory}
             onDeleteItem={deleteSettlementRecord}
             onOpenDetail={openSettlementDetail}
+            onAdEvent={trackBannerEvent}
           />
         )}
         {activeTab === tabs.history && step === steps.detail && selectedSettlement && (
           <DetailScreen
             record={selectedSettlement}
-            onBack={closeSettlementDetail}
             onDelete={deleteSelectedSettlement}
             onShare={() => setShareOpen(true)}
+            onReuse={() => startSettlementWithSetup(selectedSettlement, 'history')}
+            onAdEvent={trackBannerEvent}
           />
         )}
 
@@ -1240,17 +1428,19 @@ function App() {
         {activeTab === tabs.home && step === steps.start && (
           <StartScreen
             onStart={startNewSettlement}
+            groups={recentGroups}
+            loading={!storageHydrated}
+            error={Boolean(storageError)}
+            onReuse={(group) => startSettlementWithSetup(group, 'recent_group')}
           />
         )}
-        {activeTab === tabs.home && step === steps.title && (
-          <TitleScreen
-            title={settlementTitle}
-            onChangeTitle={setSettlementTitle}
-            onNext={() => navigateHomeStep(steps.amount)}
-          />
-        )}
-        {activeTab === tabs.home && step === steps.amount && (
-          <AmountScreen amount={amount} onAddAmount={addAmount} onInputKey={inputAmountKey} onReset={() => setAmount(0)} onNext={() => navigateHomeStep(steps.participants)} />
+        {activeTab === tabs.home && [steps.title, steps.amount].includes(step) && (
+          <AmountScreen amount={amount} title={settlementTitle} onChangeTitle={setSettlementTitle}
+            onAddAmount={addAmount} onInputKey={inputAmountKey} onReset={() => setAmount(0)}
+            onNext={quickSetup ? startQuickSetup : () => navigateHomeStep(steps.participants)}
+            quickSetup={quickSetup} participants={participants} settlementMode={settlementMode}
+            gameTitle={selectedGame.title} allowReselect={allowReselect} onEdit={editSetup}
+            onAllowReselectChange={setAllowReselect} />
         )}
         {activeTab === tabs.home && step === steps.participants && (
           <ParticipantsScreen
@@ -1263,11 +1453,12 @@ function App() {
             }}
             onRemove={removeParticipant}
             onSubmit={handleParticipantSubmit}
-            onNext={() => navigateHomeStep(steps.method)}
+            editing={Boolean(setupEdit)}
+            onNext={setupEdit ? () => finishSetupEdit(true) : () => navigateHomeStep(steps.method)}
           />
         )}
         {activeTab === tabs.home && step === steps.method && (
-          <MethodScreen selected={settlementMode} onSelect={setSettlementMode} onNext={() => chooseMethod(settlementMode)} />
+          <MethodScreen selected={settlementMode} onSelect={setSettlementMode} editing={Boolean(setupEdit)} onNext={setupEdit ? () => finishSetupEdit(true) : () => chooseMethod(settlementMode)} />
         )}
         {activeTab === tabs.home && step === steps.exempt && (
           <ExemptScreen
@@ -1287,7 +1478,8 @@ function App() {
             selectedGameId={selectedGameId}
             settlementMode={settlementMode}
             onSelect={setSelectedGameId}
-            onNext={startSelectedGame}
+            editing={Boolean(setupEdit)}
+            onNext={setupEdit ? () => finishSetupEdit(true) : startSelectedGame}
           />
         )}
         {activeTab === tabs.home && step === steps.gameRules && (
@@ -1324,7 +1516,15 @@ function App() {
             participants={participants}
             settlementResult={settlementResult}
             settlementTitle={settlementTitle.trim() || '오늘 정산'}
-            onRestart={restartSettlement}
+            onRestart={() => restartSettlement(false)}
+            onReuse={() => restartSettlement(true)}
+            shared={Boolean(sharedSettlement)}
+            pending={restartPending || !storageHydrated}
+            gameId={settlementMode === 'equal' ? null : selectedGameId}
+            settlementMode={settlementMode}
+            allowReselect={allowReselect}
+            onAdEvent={trackBannerEvent}
+            onTrack={(event, properties) => analyticsRef.current.track(event, properties)}
             onShare={() => setShareOpen(true)}
           />
         )}
@@ -1334,20 +1534,29 @@ function App() {
             participants={participants}
             settlementResult={settlementResult}
             settlementTitle={settlementTitle.trim() || '오늘 정산'}
-            onRestart={restartSettlement}
+            onRestart={() => restartSettlement(false)}
+            onReuse={() => restartSettlement(true)}
+            shared={Boolean(sharedSettlement)}
+            pending={restartPending || !storageHydrated}
+            gameId={selectedGameId}
+            settlementMode={settlementMode}
+            allowReselect={allowReselect}
+            onAdEvent={trackBannerEvent}
+            onTrack={(event, properties) => analyticsRef.current.track(event, properties)}
             onShare={() => setShareOpen(true)}
           />
         )}
         <BottomNav activeTab={activeTab} onNavigate={navigateTab} />
 
         <ShareSheet
+          allowReselect={selectedSettlement && step === steps.detail ? selectedSettlement.allowReselect : allowReselect}
           amount={selectedSettlement && step === steps.detail ? selectedSettlement.amount : effectiveAmount}
           gameId={selectedSettlement && step === steps.detail ? selectedSettlement.gameId : selectedGameId}
           open={shareOpen}
           participants={selectedSettlement && step === steps.detail ? selectedSettlement.participants : participants}
           settlementMode={selectedSettlement && step === steps.detail ? selectedSettlement.mode : settlementMode}
           settlementResult={selectedSettlement && step === steps.detail ? selectedSettlement : settlementResult}
-          settlementTitle={selectedSettlement && step === steps.detail ? selectedSettlement.title : settlementTitle.trim() || '회식 정산'}
+          settlementTitle={selectedSettlement && step === steps.detail ? selectedSettlement.title : settlementTitle.trim() || '오늘 정산'}
           onClose={() => setShareOpen(false)}
           onTrack={(eventName, properties) => analyticsRef.current.track(eventName, properties)}
         />
@@ -1411,25 +1620,17 @@ function App() {
   )
 }
 
-function TopBar({ title, progress, onBack }) {
+function TopBar({ title, progress }) {
   return (
     <header className="top-bar">
-      {onBack ? (
-        <IconButton
-          aria-label="이전 화면"
-          bgColor="transparent"
-          src="https://static.toss.im/icons/svg/icon-arrow-left-mono.svg"
-          variant="clear"
-          onClick={onBack}
-        />
-      ) : <span aria-hidden="true" />}
+      <span aria-hidden="true" />
       <strong>{title}</strong>
       <span className="progress-pill">{progress}</span>
     </header>
   )
 }
 
-function StartScreen({ onStart }) {
+function StartScreen({ onStart, groups, loading, error, onReuse }) {
   return (
     <section className="screen start-screen" aria-labelledby="start-title">
       <TdsTitle
@@ -1441,43 +1642,28 @@ function StartScreen({ onStart }) {
       <div className="hero-asset-visual" aria-hidden="true">
         <img src="/payer-picker-main-visual.png" alt="" loading="eager" />
       </div>
-      <ScreenCTA testId="start-next" onClick={onStart}>정산 시작하기</ScreenCTA>
+      {loading && <p role="status">최근 모임을 불러오는 중이에요</p>}
+      {!loading && groups.length > 0 && <section className="recent-groups" aria-label="최근 모임">
+        <h2>최근 모임으로 빠르게 시작</h2>
+        {groups.map((group) => <Button key={group.id} color="dark" variant="weak" display="full" onClick={() => onReuse(group)}>
+          <span className="recent-group-copy"><strong>{group.participants.join(', ')}</strong>
+            <small>{group.participants.length}명 · {new Date(group.lastUsedAt).toLocaleDateString('ko-KR')}</small></span>
+        </Button>)}
+      </section>}
+      {!loading && !error && groups.length === 0 && <p className="empty-recent">정산을 마치면 다음 모임에서 멤버를 다시 불러올 수 있어요.</p>}
+      <ScreenCTA testId="start-next" onClick={onStart}>{groups.length ? '새 모임으로 정산' : '정산 시작하기'}</ScreenCTA>
     </section>
   )
 }
 
-function TitleScreen({ title, onChangeTitle, onNext }) {
-  return (
-    <section className="screen title-screen" aria-labelledby="title-entry-title">
-      <TdsTitle id="title-entry-title" subtitle="선택 사항이에요. 비워 두고 바로 진행해도 돼요." title="어떤 정산인가요?" />
-      <form
-        className="title-form"
-        onSubmit={(event) => {
-          event.preventDefault()
-          onNext()
-        }}
-      >
-        <TextField
-          aria-label="정산 타이틀"
-          data-testid="settlement-title-input"
-          label="정산 타이틀"
-          labelOption="sustain"
-          placeholder="예: 강남역 삼겹살 모임"
-          value={title}
-          variant="box"
-          onChange={(event) => onChangeTitle(event.target.value)}
-        />
-      </form>
-      <div className="tip-card"><Icon>edit_note</Icon> 정산 이름은 나중에 기록을 찾기 위한 선택 항목이에요.</div>
-      <ScreenCTA testId="title-next" onClick={onNext}>금액 입력하기</ScreenCTA>
-    </section>
-  )
-}
-
-function AmountScreen({ amount, onAddAmount, onInputKey, onReset, onNext }) {
+function AmountScreen({ amount, title, onChangeTitle, onAddAmount, onInputKey, onReset, onNext,
+  quickSetup, participants, settlementMode, gameTitle, allowReselect, onEdit, onAllowReselectChange }) {
   return (
     <section className="screen amount-screen" aria-labelledby="amount-title">
       <TdsTitle id="amount-title" subtitle="정산할 총 금액을 입력해 주세요." title="얼마를 나눌까요?" />
+      <TextField aria-label="정산 타이틀" data-testid="settlement-title-input" label="정산 이름 (선택)"
+        labelOption="sustain" placeholder="예: 점심 모임" value={title} variant="box"
+        onChange={(event) => onChangeTitle(event.target.value)} />
       <div className="amount-display" aria-live="polite">
         <strong>{formatWon(amount).replace('원', '')}</strong>
         <span>원</span>
@@ -1501,12 +1687,19 @@ function AmountScreen({ amount, onAddAmount, onInputKey, onReset, onNext }) {
           </button>
         ))}
       </div>
-      <ScreenCTA disabled={amount <= 0} testId="amount-next" onClick={onNext}>참여자 입력하기</ScreenCTA>
+      {quickSetup && <section className="reuse-summary" aria-label="이번 정산 설정">
+        <h2>이 설정으로 시작해요</h2>
+        <div><span>{participants.join(', ')} · {participants.length}명</span><Button size="small" variant="weak" onClick={() => onEdit(steps.participants)}>멤버 변경</Button></div>
+        <div><span>{getSettlementModeLabel(settlementMode)}</span><Button size="small" variant="weak" onClick={() => onEdit(steps.method)}>방식 변경</Button></div>
+        {settlementMode !== 'equal' && <div><span>{gameTitle}</span><Button size="small" variant="weak" onClick={() => onEdit(steps.gameSelect)}>게임 변경</Button></div>}
+        {settlementMode === 'exempt' && <div><span>결과 재선택 허용</span><Switch aria-label="결과 재선택 허용" checked={allowReselect} onChange={(_, checked) => onAllowReselectChange(checked)} /></div>}
+      </section>}
+      <ScreenCTA disabled={!Number.isSafeInteger(amount) || amount <= 0 || (quickSetup && !normalizeReusableSetup({ participants }))} testId="amount-next" onClick={onNext}>{quickSetup ? settlementMode === 'equal' ? '결과 확인하기' : '게임 시작하기' : '참여자 입력하기'}</ScreenCTA>
     </section>
   )
 }
 
-function ParticipantsScreen({ participants, newParticipant, participantMessage, onChangeName, onSubmit, onRemove, onNext }) {
+function ParticipantsScreen({ participants, newParticipant, participantMessage, onChangeName, onSubmit, onRemove, onNext, editing }) {
   const reachedParticipantLimit = participants.length >= maxParticipants
   const visibleMessage = reachedParticipantLimit
     ? `최대 ${maxParticipants}명까지 참여할 수 있어요.`
@@ -1550,12 +1743,12 @@ function ParticipantsScreen({ participants, newParticipant, participantMessage, 
         ))}
       </ul>
       <div className="tip-card"><Icon>lightbulb</Icon> 참여자는 2명부터 최대 8명까지 추가할 수 있어요.</div>
-      <ScreenCTA disabled={participants.length < 2} testId="participants-next" onClick={onNext}>정산 방식 고르기</ScreenCTA>
+      <ScreenCTA disabled={participants.length < 2 || participants.length > 8} testId="participants-next" onClick={onNext}>{editing ? '변경 완료' : '정산 방식 고르기'}</ScreenCTA>
     </section>
   )
 }
 
-function MethodScreen({ selected, onSelect, onNext }) {
+function MethodScreen({ selected, onSelect, onNext, editing }) {
   return (
     <section className="screen method-screen" aria-labelledby="method-title">
       <TdsTitle id="method-title" subtitle="원하는 정산 방식을 선택해 주세요." title="어떻게 나눌까요?" />
@@ -1575,8 +1768,8 @@ function MethodScreen({ selected, onSelect, onNext }) {
           />
         ))}
       </ul>
-      <div className="info-card"><Icon>info</Icon> 선택한 방식에 따라 정산 결과가 자동으로 계산되어 전송됩니다.</div>
-      <ScreenCTA testId="method-next" onClick={onNext}>{selected === 'equal' ? '결과 확인하기' : '게임 선택하기'}</ScreenCTA>
+      <div className="info-card"><Icon>info</Icon> 선택한 방식으로 각자 낼 금액을 계산해요. 결과는 직접 공유할 수 있어요.</div>
+      <ScreenCTA testId="method-next" onClick={onNext}>{editing ? '변경 완료' : selected === 'equal' ? '결과 확인하기' : '게임 선택하기'}</ScreenCTA>
     </section>
   )
 }
@@ -1656,7 +1849,7 @@ function SettlementRulePreview({ amount, participants, settlementMode, selectedP
   )
 }
 
-function GameSelectScreen({ amount, games, participants, selectedGameId, settlementMode, onSelect, onNext }) {
+function GameSelectScreen({ amount, games, participants, selectedGameId, settlementMode, onSelect, onNext, editing }) {
   return (
     <section className="screen game-select-screen" aria-labelledby="game-select-title">
       <TdsTitle id="game-select-title" subtitle="정산 방식에 어울리는 게임을 선택해 보세요." title="게임 선택하기" />
@@ -1694,7 +1887,7 @@ function GameSelectScreen({ amount, games, participants, selectedGameId, settlem
           </li>
         ))}
       </ul>
-      <ScreenCTA testId="game-select-next" onClick={onNext}>게임 시작하기</ScreenCTA>
+      <ScreenCTA testId="game-select-next" onClick={onNext}>{editing ? '변경 완료' : '게임 시작하기'}</ScreenCTA>
     </section>
   )
 }
@@ -2673,24 +2866,29 @@ function RandomResultScreen({ amount, canRetry, game, settlementMode, settlement
   )
 }
 
-function FinalResultScreen({ amount, participants, settlementResult, settlementTitle, onRestart, onShare }) {
+function FinalResultScreen({ amount, participants, settlementResult, settlementTitle, onRestart, onShare,
+  onReuse, shared, pending, gameId, settlementMode, allowReselect, onAdEvent, onTrack }) {
   const { openToast } = useWebToast({ exitOnUnmount: false })
   const [imageSaving, setImageSaving] = useState(false)
 
   async function handleSaveImage() {
+    if (imageSaving || pending) return
     setImageSaving(true)
+    onTrack?.('share_requested', { share_method: 'image' })
     try {
       const payload = buildSharePayload({
         amount,
         participants,
         settlementResult,
-        settlementTitle,
+        settlementTitle, gameId, settlementMode, allowReselect,
       })
       const result = await saveSettlementImage(payload)
       if (result.mode !== 'canceled') {
+        onTrack?.('share_action_succeeded', { share_method: 'image' })
         openToast('정산 이미지를 저장하거나 공유했어요.', { duration: 1800 })
       }
     } catch {
+      onTrack?.('share_failed', { share_method: 'image', failure_reason: 'image_error' })
       openToast('이미지를 저장하지 못했어요.', { duration: 2200 })
     } finally {
       setImageSaving(false)
@@ -2699,6 +2897,7 @@ function FinalResultScreen({ amount, participants, settlementResult, settlementT
 
   return (
     <section className="screen final-screen" aria-labelledby="final-title">
+      <strong className="result-brand">누가낼래</strong>
       <div className="success-icon"><Icon>check_circle</Icon></div>
       <TdsTitle centered id="final-title" subtitle="총 정산 금액" title="정산이 완료됐어요" />
       <strong className="settlement-title">{settlementTitle}</strong>
@@ -2720,16 +2919,18 @@ function FinalResultScreen({ amount, participants, settlementResult, settlementT
         ))}
       </ul>
       <div className="celebration-card"><Icon>celebration</Icon> {settlementResult.summaryText}</div>
+      {!shared && resultBannerEnabled && <AdBanner className="result-ad-banner" placement="result" onEvent={onAdEvent} />}
+      <Button disabled={pending} color="primary" display="full" size="large" onClick={onReuse}>{shared ? '같은 멤버로 시작' : '같은 멤버로 새 정산'}</Button>
       <div className="button-row">
-        <Button color="primary" disabled={imageSaving} display="full" size="large" type="button" variant="weak" onClick={handleSaveImage}><Icon>image</Icon> {imageSaving ? '이미지 만드는 중' : '이미지로 저장'}</Button>
-        <Button color="primary" display="full" size="large" type="button" variant="weak" onClick={onRestart}><Icon>refresh</Icon> 새로운 정산</Button>
+        <Button color="primary" disabled={imageSaving || pending} display="full" size="large" type="button" variant="weak" onClick={handleSaveImage}><Icon>image</Icon> {imageSaving ? '이미지 만드는 중' : '이미지로 저장'}</Button>
+        <Button disabled={pending} color="primary" display="full" size="large" type="button" variant="weak" onClick={onRestart}><Icon>refresh</Icon> 새 모임으로 정산</Button>
       </div>
-      <ScreenCTA icon="share" onClick={onShare}>결과 공유하기</ScreenCTA>
+      <ScreenCTA disabled={pending} icon="share" onClick={onShare}>결과 공유하기</ScreenCTA>
     </section>
   )
 }
 
-function HistoryScreen({ items, loading, onClearAll, onDeleteItem, onOpenDetail }) {
+function HistoryScreen({ items, loading, onClearAll, onDeleteItem, onOpenDetail, onAdEvent }) {
   const [clearAllDialogOpen, setClearAllDialogOpen] = useState(false)
 
   async function confirmClearAll() {
@@ -2756,18 +2957,20 @@ function HistoryScreen({ items, loading, onClearAll, onDeleteItem, onOpenDetail 
           )}
         </div>
         <ul className="tds-list history-list">
-          {items.map((item) => (
+          {items.map((item, index) => (
+            <Fragment key={item.id}>
             <SwipeableHistoryRow
               item={item}
               key={item.id}
               onDelete={onDeleteItem}
               onOpen={onOpenDetail}
             />
+            {index === 1 && <li className="history-ad-row"><AdBanner className="history-ad-banner" placement="history" onEvent={onAdEvent} /></li>}
+            </Fragment>
           ))}
         </ul>
         {loading && <div className="state-grid" role="status"><span>정산 내역을 불러오는 중이에요</span></div>}
         {!loading && items.length === 0 && <div className="state-grid"><span>아직 정산 내역이 없어요</span></div>}
-        {items.length >= 2 && <AdBanner className="history-ad-banner" />}
       </section>
       <ConfirmDialog
         closeOnBackEvent
@@ -2888,26 +3091,29 @@ function SwipeableHistoryRow({ item, onDelete, onOpen }) {
   )
 }
 
-function AdBanner({ className }) {
+function AdBanner({ className, placement, onEvent }) {
   const targetRef = useRef(null)
+  const [state, setState] = useState('loading')
 
   useEffect(() => attachHistoryBanner({
     ads: TossAds,
     enabled: adsEnabled,
     groupId: bannerAdGroupId,
     target: targetRef.current,
-  }), [])
+    onState: setState,
+    onEvent: (event) => onEvent?.(event, placement),
+  }), [placement, onEvent])
 
-  return <aside ref={targetRef} aria-label="광고" className={className} />
+  return <aside ref={targetRef} aria-label="광고" hidden={state === 'unavailable'} className={className} />
 }
 
-function DetailScreen({ record, onBack, onDelete, onShare }) {
+function DetailScreen({ record, onDelete, onShare, onReuse, onAdEvent }) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const completedDate = new Date(record.completedAt).toLocaleDateString('ko-KR')
 
   return (
     <>
-      <TopBar title="상세 내역" progress={completedDate} onBack={onBack} />
+      <TopBar title="상세 내역" progress={completedDate} />
       <section className="screen detail-screen" aria-labelledby="detail-title">
         <TdsTitle id="detail-title" subtitle={`${completedDate} 완료한 정산`} title={record.title} />
         <div className="summary-banner"><span>총 결제 금액</span><strong>{formatWon(record.amount)}</strong><Icon>auto_awesome</Icon></div>
@@ -2924,8 +3130,9 @@ function DetailScreen({ record, onBack, onDelete, onShare }) {
           ))}
         </ul>
         <blockquote>{record.summaryText}</blockquote>
+        <AdBanner className="detail-ad-banner" placement="history_detail" onEvent={onAdEvent} />
+        <Button color="primary" display="full" size="large" disabled={!normalizeReusableSetup(record)} onClick={onReuse}>같은 멤버로 새 정산</Button>
         <Button color="danger" display="full" size="large" type="button" onClick={() => setDeleteDialogOpen(true)}><Icon>delete</Icon> 정산 내역 삭제</Button>
-        <AdBanner className="detail-ad-banner" />
         <ScreenCTA icon="share" onClick={onShare}>결과 다시 공유하기</ScreenCTA>
       </section>
       <ConfirmDialog
@@ -3019,20 +3226,23 @@ function SettingsRow({ icon, title, description, danger = false, onClick }) {
   )
 }
 
-function ShareSheet({ amount, gameId, open, participants, settlementMode, settlementResult, settlementTitle, onClose, onTrack }) {
+function ShareSheet({ amount, gameId, open, participants, settlementMode, settlementResult, settlementTitle, allowReselect, onClose, onTrack }) {
   const { openToast } = useWebToast({ exitOnUnmount: false })
   const [shareActionPending, setShareActionPending] = useState(null)
-  const payload = buildSharePayload({ amount, gameId, participants, settlementMode, settlementResult, settlementTitle })
+  const payload = buildSharePayload({ amount, gameId, participants, settlementMode, settlementResult, settlementTitle, allowReselect })
 
   async function runShareAction(action, successMessage, errorMessage, shareMethod) {
+    if (shareActionPending) return
     setShareActionPending(true)
+    onTrack?.('share_requested', { share_method: shareMethod })
     try {
       const result = await action()
       if (result?.mode !== 'canceled') {
         openToast(successMessage, { duration: 1800 })
-        onTrack?.('share_completed', { share_method: shareMethod })
+        onTrack?.('share_action_succeeded', { share_method: shareMethod })
       }
     } catch {
+      onTrack?.('share_failed', { share_method: shareMethod, failure_reason: 'share_error' })
       openToast(errorMessage, { duration: 2200 })
     } finally {
       setShareActionPending(null)
@@ -3042,7 +3252,7 @@ function ShareSheet({ amount, gameId, open, participants, settlementMode, settle
   function handleTossShare() {
     return runShareAction(async () => {
       const tossLink = await getSettlementShareLink(payload)
-      await share({ message: `${payload.message}\n${tossLink}` })
+      return share({ message: `${payload.message}\n결과 확인하고 같은 멤버로 시작하기\n${tossLink}` })
     }, '토스 공유창을 열었어요.', '토스 공유를 열지 못했어요.', 'toss')
   }
 
@@ -3054,11 +3264,7 @@ function ShareSheet({ amount, gameId, open, participants, settlementMode, settle
 
   function handleCopySummary() {
     return runShareAction(async () => {
-      try {
-        await setClipboardText(payload.message)
-      } catch {
-        await navigator.clipboard?.writeText(payload.message)
-      }
+      await copyText(payload.message)
     }, '송금용 정산 요약을 복사했어요.', '정산 요약을 복사하지 못했어요.', 'summary')
   }
 
@@ -3071,7 +3277,7 @@ function ShareSheet({ amount, gameId, open, participants, settlementMode, settle
   function handleKakaoShare() {
     return runShareAction(async () => {
       const tossLink = await getSettlementShareLink(payload)
-      await share({ message: `카카오톡으로 공유해 주세요.\n${payload.message}\n${tossLink}` })
+      return share({ message: `${payload.message}\n결과 확인하고 같은 멤버로 시작하기\n${tossLink}` })
     }, '공유창에서 카카오톡을 선택해 주세요.', '카카오톡 공유를 열지 못했어요.', 'kakao')
   }
 
@@ -3080,7 +3286,7 @@ function ShareSheet({ amount, gameId, open, participants, settlementMode, settle
     ['content_copy', '정산 요약 복사', handleCopySummary],
     ['link', '링크 복사', handleCopyLink],
     ['download', '이미지 저장', handleSaveImage],
-    ['send', '카카오톡으로 바로 보내기', handleKakaoShare],
+    ['send', '공유창에서 카카오톡 선택', handleKakaoShare],
   ]
 
   return (

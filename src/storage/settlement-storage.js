@@ -35,7 +35,7 @@ function normalizeDraft(value) {
   if (!Array.isArray(value.participants) || !value.participants.every(isNonEmptyString)) return null
   if (!isFiniteNonNegativeNumber(value.amount)) return null
 
-  return value
+  return { ...value, step: value.step === 'title' ? 'amount' : value.step }
 }
 
 function normalizeLastSetup(value) {
@@ -74,6 +74,22 @@ const supportedGameIds = new Set([
   'numberOrder',
   'memoryCard',
 ])
+
+export function normalizeReusableSetup(value) {
+  if (!isPlainObject(value) || !Array.isArray(value.participants)) return null
+  if (value.participants.length < 2 || value.participants.length > 8 || !value.participants.every(isNonEmptyString)) return null
+  const participants = value.participants.map((name) => name.trim())
+  if (new Set(participants).size !== participants.length) return null
+  const mode = value.settlementMode ?? value.mode
+  const gameId = value.selectedGameId ?? value.gameId
+  const settlementMode = supportedSettlementModes.has(mode) ? mode : 'exempt'
+  return {
+    participants,
+    settlementMode,
+    selectedGameId: supportedGameIds.has(gameId) ? gameId : 'roulette',
+    allowReselect: settlementMode === 'exempt' && value.allowReselect === true,
+  }
+}
 
 function normalizeAppSettings(value) {
   if (!isPlainObject(value) || value.version !== 1) {
@@ -115,16 +131,16 @@ function isSettlementRecord(value) {
 
 function normalizeSettlements(value) {
   if (!Array.isArray(value)) return []
-  return value.filter(isSettlementRecord)
+  return value.filter(isSettlementRecord).map((record) => ({ ...record, allowReselect: record.allowReselect === true }))
 }
 
 function normalizeAdFrequency(value) {
   if (!isPlainObject(value)) {
-    return { completedCount: 0, lastInterstitialAt: null }
+    return { completedCount: 0, lastInterstitialAt: null, lastInterstitialCompletedCount: 0 }
   }
 
   const completedCount =
-    Number.isInteger(value.completedCount) && value.completedCount >= 0
+    Number.isSafeInteger(value.completedCount) && value.completedCount >= 0
       ? value.completedCount
       : 0
   const lastInterstitialAt =
@@ -134,7 +150,11 @@ function normalizeAdFrequency(value) {
       ? value.lastInterstitialAt
       : null
 
-  return { completedCount, lastInterstitialAt }
+  // Old installations start their new frequency window at the migration count.
+  const lastInterstitialCompletedCount = Number.isSafeInteger(value.lastInterstitialCompletedCount)
+    ? Math.min(completedCount, Math.max(0, value.lastInterstitialCompletedCount))
+    : completedCount
+  return { completedCount, lastInterstitialAt, lastInterstitialCompletedCount }
 }
 
 function parseStoredValue(value, fallback, normalize) {
@@ -188,6 +208,7 @@ export function createSettlementRepository(storage) {
         {
           completedCount: 0,
           lastInterstitialAt: null,
+          lastInterstitialCompletedCount: 0,
         },
         normalizeAdFrequency,
       ),
@@ -212,19 +233,21 @@ export function createSettlementRepository(storage) {
 }
 
 function groupKey(participants) {
-  return [...participants].sort((left, right) => left.localeCompare(right, 'ko')).join('|')
+  return JSON.stringify([...participants].sort())
 }
 
 export function deriveRecentGroups(records) {
   const groups = new Map()
 
   records.forEach((record) => {
-    const id = groupKey(record.participants || [])
+    const setup = normalizeReusableSetup(record)
+    if (!setup || !isNonEmptyString(record.completedAt) || Number.isNaN(Date.parse(record.completedAt))) return
+    const id = groupKey(setup.participants)
     const current = groups.get(id)
-    if (!current || record.completedAt > current.lastUsedAt) {
+    if (!current || Date.parse(record.completedAt) > Date.parse(current.lastUsedAt)) {
       groups.set(id, {
         id,
-        participants: [...record.participants],
+        ...setup,
         lastUsedAt: record.completedAt,
         usageCount: (current?.usageCount || 0) + 1,
       })
@@ -234,5 +257,5 @@ export function deriveRecentGroups(records) {
     current.usageCount += 1
   })
 
-  return [...groups.values()].sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt))
+  return [...groups.values()].sort((left, right) => Date.parse(right.lastUsedAt) - Date.parse(left.lastUsedAt))
 }

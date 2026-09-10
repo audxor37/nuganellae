@@ -27,6 +27,12 @@ test('initializes Amplitude without cookies or automatic capture', () => {
   expect(sdk.setOptOut).toHaveBeenCalledWith(false)
 })
 
+test('records shared entry instead of attributing it to direct entry', async () => {
+  const sdk = { init: vi.fn(), track: vi.fn() }
+  await initializeAnalyticsClient({ apiKey: 'key', deviceId: 'device', source: 'share', loadSdk: async () => sdk })
+  expect(sdk.track).toHaveBeenCalledWith('app_opened', { source: 'share' })
+})
+
 test('tracks only allowlisted properties and becomes a no-op after opt-out', () => {
   const sdk = {
     init: vi.fn(),

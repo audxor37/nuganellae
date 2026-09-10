@@ -1,3 +1,6 @@
+// share_action_succeeded measures a completed local action, not delivery to a friend.
+// Banner viewable and interstitial impression are distinct revenue signals;
+// actual revenue/eCPM must come from the advertising console.
 export const allowedAnalyticsProperties = new Set([
   'source',
   'stage',
@@ -9,6 +12,11 @@ export const allowedAnalyticsProperties = new Set([
   'share_method',
   'ad_type',
   'failure_reason',
+  'placement',
+  'policy_version',
+  'skip_reason',
+  'is_repeat',
+  'setup_duration_bucket',
 ])
 
 export function sanitizeAnalyticsProperties(properties = {}) {

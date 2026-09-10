@@ -23,7 +23,7 @@ test('shared deep links can include a settlement result snapshot', () => {
       amount: 84000,
       gameId: 'roulette',
       lineItems: [
-        { participant: '민수', amount: 28000, amountText: '28,000원', description: '분담', highlighted: false },
+        { participant: '민수', amount: 84000, amountText: '84,000원', description: '분담', highlighted: false },
         { participant: '영희', amount: 0, amountText: '0원', description: '면제', highlighted: true },
       ],
       mode: 'exempt',
@@ -49,6 +49,21 @@ test('shared deep links can include a settlement result snapshot', () => {
     title: '강남역 삼겹살',
   })
   expect(parseSettlementShareSnapshot(result).lineItems).toHaveLength(2)
+})
+
+test('validates shared participant membership and exact integer totals before reuse', () => {
+  const valid = { amount: 10, participants: [' 가 ', '나'], mode: 'unknown', gameId: 'unknown', lineItems: [
+    { participant: ' 가 ', amount: 5 }, { participant: '나', amount: 5 },
+  ] }
+  expect(parseSettlementShareSnapshot(JSON.stringify(valid))).toMatchObject({ participants: ['가', '나'], mode: 'exempt', gameId: 'roulette', allowReselect: false })
+  for (const patch of [
+    { amount: 10.5 }, { amount: Number.MAX_SAFE_INTEGER + 1 }, { amount: '10' },
+    { participants: ['가', ' 가 '] }, { participants: ['가'] },
+    { lineItems: [{ participant: '가', amount: 10 }] },
+    { lineItems: [{ participant: '가', amount: 5 }, { participant: '다', amount: 5 }] },
+    { lineItems: [{ participant: '가', amount: 6 }, { participant: '나', amount: 5 }] },
+    { lineItems: [{ participant: '가', amount: 10.5 }, { participant: '나', amount: -0.5 }] },
+  ]) expect(parseSettlementShareSnapshot(JSON.stringify({ ...valid, ...patch }))).toBeNull()
 })
 
 test('shared deep links omit unavailable optional context', () => {

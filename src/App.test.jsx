@@ -7,6 +7,15 @@ import App, { getTimingStopPosition, sanitizeFileName } from './App'
 import { storageKeys } from './storage/settlement-storage'
 
 const bridgeMocks = vi.hoisted(() => ({
+  backEventHandlers: [],
+  graniteEvent: {
+    addEventListener: vi.fn((eventName, handlers) => {
+      if (eventName === 'backEvent') {
+        bridgeMocks.backEventHandlers.push(handlers)
+      }
+      return vi.fn()
+    }),
+  },
   getTossShareLink: vi.fn(async () => 'https://toss.im/share?deep_link_value=nuganellae'),
   loadFullScreenAd: Object.assign(vi.fn(), { isSupported: vi.fn(() => false) }),
   saveBase64Data: vi.fn(async () => undefined),
@@ -92,6 +101,11 @@ function renderApp() {
   )
 }
 
+function installTossNativeBridge() {
+  window.ReactNativeWebView = { postMessage: vi.fn() }
+  window.__GRANITE_NATIVE_EMITTER = { on: vi.fn(() => vi.fn()) }
+}
+
 function startSettlement() {
   fireEvent.click(screen.getByRole('button', { name: /설정하고 시작|정산 시작하기/ }))
   const detailedSetupButton = screen.queryByRole('button', { name: '자세히 설정' })
@@ -141,15 +155,73 @@ async function completeReactionTurn(participant, reactionMs) {
 
 beforeEach(() => {
   window.history.pushState(null, '', '/')
+  installTossNativeBridge()
+})
+
+test('reuse: new settlement starts with amount and an empty editable participant list', async () => {
+  renderApp()
+  fireEvent.click(screen.getByTestId('start-next'))
+  expect(screen.getByLabelText('정산 타이틀')).toBeInTheDocument()
+  expect(screen.getByTestId('amount-next')).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: '+1만 원' }))
+  fireEvent.click(screen.getByTestId('amount-next'))
+  expect(screen.queryByText('민수')).not.toBeInTheDocument()
+  expect(screen.getByTestId('participants-next')).toBeDisabled()
+  for (const name of ['가람', '나래']) {
+    fireEvent.change(screen.getByLabelText('참여자 이름'), { target: { value: name } })
+    fireEvent.click(screen.getByRole('button', { name: '추가' }))
+  }
+  expect(screen.getByTestId('participants-next')).toBeEnabled()
+  fireEvent.click(screen.getAllByRole('button', { name: '삭제' })[0])
+  fireEvent.click(screen.getByRole('button', { name: '삭제' }))
+  expect(screen.getByTestId('participants-next')).toBeDisabled()
+})
+
+test('reuse: shared result starts an independent settlement and saves only the new result', async () => {
+  const snapshot = {
+    title: '이전 모임', amount: 20000, participants: ['가람', '나래'], mode: 'equal',
+    modeLabel: '똑같이 나누기', gameId: null, selectedParticipant: '', summaryText: '각 10,000원',
+    lineItems: ['가람', '나래'].map((participant) => ({ participant, amount: 10000, amountText: '10,000원' })),
+  }
+  window.history.replaceState(null, '', `/?source=share&result=${encodeURIComponent(JSON.stringify(snapshot))}`)
+  renderApp()
+  await waitFor(() => expect(screen.getByRole('button', { name: '같은 멤버로 시작' })).toBeEnabled())
+  expect(bridgeMocks.Storage.setItem.mock.calls.filter(([key]) => key === storageKeys.settlements)).toHaveLength(0)
+  fireEvent.click(screen.getByRole('button', { name: '같은 멤버로 시작' }))
+  expect(screen.getByLabelText('정산 타이틀')).toHaveValue('')
+  expectDisplayedAmount('0')
+  fireEvent.click(screen.getByRole('button', { name: '+5만 원' }))
+  fireEvent.click(screen.getByTestId('amount-next'))
+  expect(screen.getAllByText('25,000원')).toHaveLength(2)
+  expect(screen.queryByText('이전 모임')).not.toBeInTheDocument()
+  await waitFor(() => {
+    const writes = bridgeMocks.Storage.setItem.mock.calls.filter(([key]) => key === storageKeys.settlements)
+    expect(writes).toHaveLength(1)
+    expect(JSON.parse(writes[0][1])[0]).toMatchObject({ amount: 50000, participants: ['가람', '나래'] })
+  })
 })
 
 afterEach(() => {
   vi.useRealTimers()
   vi.clearAllMocks()
+  bridgeMocks.backEventHandlers.length = 0
   window.history.pushState(null, '', '/')
   bridgeMocks.Storage.getItem.mockResolvedValue(null)
   bridgeMocks.Storage.setItem.mockResolvedValue(undefined)
   bridgeMocks.Storage.removeItem.mockResolvedValue(undefined)
+  delete window.ReactNativeWebView
+  delete window.__GRANITE_NATIVE_EMITTER
+})
+
+test('does not subscribe to Toss back events in a browser without the native bridge', () => {
+  delete window.ReactNativeWebView
+  delete window.__GRANITE_NATIVE_EMITTER
+
+  renderApp()
+  fireEvent.click(screen.getByTestId('start-next'))
+
+  expect(screen.getByRole('heading', { name: '얼마를 나눌까요?' })).toBeInTheDocument()
+  expect(bridgeMocks.graniteEvent.addEventListener).not.toHaveBeenCalled()
 })
 
 test('does not present sample settlements as real saved history', async () => {
@@ -699,7 +771,7 @@ test('does not overwrite existing history after a temporary history read failure
 test('uses TDS Mobile primitives for the main UI surfaces', () => {
   const appSource = readFileSync(join(process.cwd(), 'src', 'App.jsx'), 'utf8')
 
-  expect(appSource).toMatch(/import \{[^}]*BottomCTA[^}]*BottomSheet[^}]*Button[^}]*ConfirmDialog[^}]*IconButton[^}]*ListHeader[^}]*ListRow[^}]*SegmentedControl[^}]*Tab[^}]*TextField[^}]*Top[^}]*\} from '@toss\/tds-mobile'/)
+  expect(appSource).toMatch(/import \{[^}]*BottomCTA[^}]*BottomSheet[^}]*Button[^}]*ConfirmDialog[^}]*ListHeader[^}]*ListRow[^}]*Switch[^}]*Tab[^}]*TextField[^}]*Top[^}]*\} from '@toss\/tds-mobile'/)
   expect(appSource).toMatch(/<Top[\s>]/)
   expect(appSource).toMatch(/<BottomCTA\.Single[\s>]/)
   expect(appSource).toMatch(/<BottomSheet[\s>]/)
@@ -902,16 +974,25 @@ test('lets users skip the optional settlement title', () => {
 test('moves backward to the immediately previous home flow screen', () => {
   renderApp()
 
-  startSettlement()
-  enterAmountWithQuickButton()
-  fireEvent.click(screen.getByRole('button', { name: /정산 방식 고르기/ }))
+  fireEvent.click(screen.getByTestId('start-next'))
+  fireEvent.click(screen.getByRole('button', { name: '+5만 원' }))
+  fireEvent.click(screen.getByTestId('amount-next'))
+  fireEvent.change(screen.getByLabelText('참여자 이름'), { target: { value: '가람' } })
+  fireEvent.click(screen.getByRole('button', { name: '추가' }))
+  fireEvent.change(screen.getByLabelText('참여자 이름'), { target: { value: '나래' } })
+  fireEvent.click(screen.getByRole('button', { name: '추가' }))
+  fireEvent.click(screen.getByTestId('participants-next'))
 
   expect(screen.getByRole('heading', { name: '어떻게 나눌까요?' })).toBeInTheDocument()
 
-  fireEvent.click(screen.getByRole('button', { name: '이전 화면' }))
+  act(() => {
+    bridgeMocks.backEventHandlers.at(-1).onEvent()
+  })
   expect(screen.getByRole('heading', { name: '누가 함께했나요?' })).toBeInTheDocument()
 
-  fireEvent.click(screen.getByRole('button', { name: '이전 화면' }))
+  act(() => {
+    bridgeMocks.backEventHandlers.at(-1).onEvent()
+  })
   expect(screen.getByRole('heading', { name: '얼마를 나눌까요?' })).toBeInTheDocument()
 })
 
@@ -987,6 +1068,29 @@ test('selects exempt settlement and shows roulette animation before the result',
   expect(screen.getByText('면제 (0원)')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /같은 설정으로 다시하기/ })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /다른 게임으로 다시하기/ })).toBeInTheDocument()
+})
+
+test('uses the Toss back event for the previous setup screen without rendering an app back button', () => {
+  renderApp()
+
+  fireEvent.click(screen.getByTestId('start-next'))
+  fireEvent.click(screen.getByRole('button', { name: '+5만 원' }))
+  fireEvent.click(screen.getByTestId('amount-next'))
+  fireEvent.change(screen.getByLabelText('참여자 이름'), { target: { value: '가람' } })
+  fireEvent.click(screen.getByRole('button', { name: '추가' }))
+  fireEvent.change(screen.getByLabelText('참여자 이름'), { target: { value: '나래' } })
+  fireEvent.click(screen.getByRole('button', { name: '추가' }))
+  fireEvent.click(screen.getByTestId('participants-next'))
+
+  expect(screen.queryByRole('button', { name: '이전 화면' })).not.toBeInTheDocument()
+  const handlers = bridgeMocks.backEventHandlers
+  expect(handlers.at(-1)?.onEvent).toEqual(expect.any(Function))
+
+  act(() => {
+    handlers.at(-1).onEvent()
+  })
+
+  expect(screen.getByRole('heading', { name: '누가 함께했나요?' })).toBeInTheDocument()
 })
 
 test('opens the share sheet directly from the integrated game result', async () => {
@@ -1917,8 +2021,13 @@ test('leaving an in-progress ranking game uses a TDS confirmation dialog before 
   const confirmSpy = vi.spyOn(window, 'confirm')
   const { container } = renderApp()
 
-  startSettlement()
-  enterAmountWithQuickButton()
+  fireEvent.click(screen.getByTestId('start-next'))
+  fireEvent.click(screen.getByRole('button', { name: '+5만 원' }))
+  fireEvent.click(screen.getByTestId('amount-next'))
+  fireEvent.change(screen.getByLabelText('참여자 이름'), { target: { value: '가람' } })
+  fireEvent.click(screen.getByRole('button', { name: '추가' }))
+  fireEvent.change(screen.getByLabelText('참여자 이름'), { target: { value: '나래' } })
+  fireEvent.click(screen.getByRole('button', { name: '추가' }))
   fireEvent.click(screen.getByTestId('participants-next'))
   fireEvent.click(screen.getByTestId('method-exempt'))
   fireEvent.click(screen.getByTestId('method-next'))
@@ -1929,7 +2038,9 @@ test('leaving an in-progress ranking game uses a TDS confirmation dialog before 
   fireEvent.click(screen.getByTestId('play-order-next'))
   fireEvent.click(screen.getByTestId('participant-turn-start'))
 
-  fireEvent.click(container.querySelector('.top-bar button'))
+  act(() => {
+    bridgeMocks.backEventHandlers.at(-1).onEvent()
+  })
 
   expect(confirmSpy).not.toHaveBeenCalled()
   const dialog = screen.getByRole('dialog', { name: '게임을 나갈까요?' })
@@ -1942,7 +2053,9 @@ test('leaving an in-progress ranking game uses a TDS confirmation dialog before 
   expect(screen.queryByRole('dialog', { name: '게임을 나갈까요?' })).not.toBeInTheDocument()
   expect(screen.getByTestId('game-countdown-overlay')).toBeInTheDocument()
 
-  fireEvent.click(container.querySelector('.top-bar button'))
+  act(() => {
+    bridgeMocks.backEventHandlers.at(-1).onEvent()
+  })
   fireEvent.click(within(screen.getByRole('dialog', { name: '게임을 나갈까요?' })).getByRole('button', { name: '나가기' }))
 
   expect(screen.getByRole('heading', { name: '게임 선택하기' })).toBeInTheDocument()
@@ -1950,7 +2063,7 @@ test('leaving an in-progress ranking game uses a TDS confirmation dialog before 
   fireEvent.click(screen.getByTestId('game-select-next'))
   fireEvent.click(screen.getByTestId('game-rules-next'))
   fireEvent.click(screen.getByTestId('play-order-next'))
-  expect(screen.getByText(/1\/4/)).toBeInTheDocument()
+  expect(screen.getByText(/1\/2/)).toBeInTheDocument()
 })
 
 test('reaction game uses the large purple tap-focused play screen after countdown', async () => {

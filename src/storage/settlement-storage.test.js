@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   createSettlementRepository,
   deriveRecentGroups,
+  normalizeReusableSetup,
   storageKeys,
 } from './settlement-storage'
 
@@ -84,9 +85,10 @@ describe('settlement storage repository', () => {
     })
     const repository = createSettlementRepository(storage)
 
-    await expect(repository.loadSettlements()).resolves.toEqual([validRecord])
+    await expect(repository.loadSettlements()).resolves.toEqual([{ ...validRecord, allowReselect: false }])
     await expect(repository.loadAdFrequency()).resolves.toEqual({
       completedCount: 0,
+      lastInterstitialCompletedCount: 0,
       lastInterstitialAt: null,
     })
   })
@@ -112,7 +114,7 @@ describe('settlement storage repository', () => {
       })
       await expect(
         createSettlementRepository(storage).loadDraft(),
-      ).resolves.toMatchObject({ step })
+      ).resolves.toMatchObject({ step: step === 'title' ? 'amount' : step })
     }
 
     const obsoleteStorage = createMemoryStorage({
@@ -229,18 +231,52 @@ test('recent groups combine records with the same participants regardless of ord
 
   expect(groups).toEqual([
     {
-      id: '민수|지훈',
+      id: JSON.stringify(['민수', '지훈']),
+      settlementMode: 'exempt', selectedGameId: 'roulette', allowReselect: false,
       participants: ['지훈', '민수'],
       lastUsedAt: '2026-07-31T10:00:00.000Z',
       usageCount: 2,
     },
     {
-      id: '수진|영희',
+      id: JSON.stringify(['수진', '영희']),
+      settlementMode: 'exempt', selectedGameId: 'roulette', allowReselect: false,
       participants: ['수진', '영희'],
       lastUsedAt: '2026-07-29T10:00:00.000Z',
       usageCount: 1,
     },
   ])
+})
+
+test('reusable setup trims names, rejects invalid groups and uses supported settings', () => {
+  expect(normalizeReusableSetup({ participants: [' 민수 ', '지훈'], mode: 'unknown', gameId: 'unknown', allowReselect: true }))
+    .toEqual({ participants: ['민수', '지훈'], settlementMode: 'exempt', selectedGameId: 'roulette', allowReselect: true })
+  expect(normalizeReusableSetup({ participants: ['민수', ' 민수 '] })).toBeNull()
+  expect(normalizeReusableSetup({ participants: ['민수'] })).toBeNull()
+  expect(normalizeReusableSetup({ participants: Array.from({ length: 9 }, (_, i) => String(i)) })).toBeNull()
+  expect(normalizeReusableSetup({ participants: ['민수', '지훈'], mode: 'extra', allowReselect: true }).allowReselect).toBe(false)
+})
+
+test('recent groups avoid delimiter collisions and restore the latest settings', () => {
+  const groups = deriveRecentGroups([
+    { participants: ['a|b', 'c'], completedAt: '2026-09-01', mode: 'exempt', gameId: 'roulette' },
+    { participants: ['a', 'b|c'], completedAt: '2026-09-02' },
+    { participants: ['c', 'a|b'], completedAt: '2026-09-03', mode: 'discount', gameId: 'reaction' },
+    { participants: ['bad', 'bad'], completedAt: '2026-09-04' },
+  ])
+  expect(groups).toHaveLength(2)
+  expect(groups[0]).toMatchObject({ participants: ['c', 'a|b'], settlementMode: 'discount', selectedGameId: 'reaction', usageCount: 2 })
+})
+
+test('migrates ad frequency conservatively and clamps its completion baseline', async () => {
+  for (const [stored, baseline] of [
+    [{ completedCount: 8, lastInterstitialAt: null }, 8],
+    [{ completedCount: 8, lastInterstitialCompletedCount: 99 }, 8],
+    [{ completedCount: 8, lastInterstitialCompletedCount: -1 }, 0],
+    [null, 0],
+  ]) {
+    const repository = createSettlementRepository(createMemoryStorage({ [storageKeys.adFrequency]: JSON.stringify(stored) }))
+    expect((await repository.loadAdFrequency()).lastInterstitialCompletedCount).toBe(baseline)
+  }
 })
 
 test('serializes writes so clearAppData always runs after pending saves', async () => {

@@ -1,7 +1,8 @@
 export const interstitialCooldownMs = 10 * 60 * 1000
 
 export function shouldShowInterstitial(state, now = Date.now()) {
-  if (!state || state.completedCount <= 0 || state.completedCount % 3 !== 0) {
+  if (!state || !Number.isSafeInteger(state.completedCount) || state.completedCount < 3 ||
+      state.completedCount - (state.lastInterstitialCompletedCount ?? 0) < 3) {
     return false
   }
 
@@ -15,6 +16,7 @@ export function shouldShowInterstitial(state, now = Date.now()) {
 export function getNextAdFrequencyState(state = {
   completedCount: 0,
   lastInterstitialAt: null,
+  lastInterstitialCompletedCount: 0,
 }, action) {
   if (action.type === 'SETTLEMENT_COMPLETED') {
     return {
@@ -27,6 +29,7 @@ export function getNextAdFrequencyState(state = {
     return {
       ...state,
       lastInterstitialAt: action.now,
+      lastInterstitialCompletedCount: action.completedCount ?? state.completedCount,
     }
   }
 

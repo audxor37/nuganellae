@@ -31,8 +31,13 @@ export function createAnalyticsClient({ apiKey, deviceId, enabled, sdk }) {
         return false
       }
 
-      sdk.track(eventName, sanitizeAnalyticsProperties(properties))
-      return true
+      try {
+        sdk.track(eventName, sanitizeAnalyticsProperties(properties))
+        return true
+      } catch {
+        // Analytics failure must not interrupt settlement or native ad cleanup.
+        return false
+      }
     },
   }
 }
@@ -40,6 +45,7 @@ export function createAnalyticsClient({ apiKey, deviceId, enabled, sdk }) {
 export async function initializeAnalyticsClient({
   apiKey,
   deviceId,
+  source = 'direct',
   isOptedOut = () => false,
   loadSdk,
 }) {
@@ -62,6 +68,6 @@ export async function initializeAnalyticsClient({
     return null
   }
 
-  client.track('app_opened', { source: 'direct' })
+  client.track('app_opened', { source: source === 'share' ? 'share' : 'direct' })
   return client
 }
